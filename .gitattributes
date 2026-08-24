@@ -1,0 +1,8 @@
+# Normalize to LF in the repository. Shell scripts and SQL init files are executed
+# inside Linux containers, so CRLF would break them.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.zip binary
+*.gz  binary
