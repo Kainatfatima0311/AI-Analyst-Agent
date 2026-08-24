@@ -10,8 +10,8 @@ Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known is
 |---:|---|:---:|---|---|
 | 0 | Repo skeleton, `plan.md`, `progress.md` | ✅ | 2026-08-24 | `chore(init)` |
 | 1 | Design document | ✅ | 2026-08-24 | `docs(design)` / `v0.1-design` |
-| 2 | Postgres in Docker, read-only role, seeded dataset | 🟨 | 2026-08-24 | — |
-| 3 | Config, structured logging, run/trace/audit persistence | ⬜ | — | — |
+| 2 | Postgres in Docker, read-only role, seeded dataset | ✅ | 2026-08-24 | `feat(db)` |
+| 3 | Config, structured logging, run/trace/audit persistence | 🟨 | 2026-08-24 | — |
 | 4 | `sql_guard` — SQL safety layer | ⬜ | — | — |
 | 5 | Metrics layer (approved KPI definitions) | ⬜ | — | — |
 | 6 | The five tools | ⬜ | — | — |
@@ -29,7 +29,7 @@ Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known is
 | Metric | Target | Current | Measured at |
 |---|---|---|---|
 | Calculation accuracy (factual questions) | ≥ 90% | — | — |
-| SQL safety violations | 0 | — | — |
+| SQL safety violations | 0 | 0 | Step 2 — 29/29 read-only assertions pass |
 | Diagnostic questions with ≥2 tested hypotheses | 100% | — | — |
 | Ambiguous questions correctly deferred to a human | ≥ 90% | — | — |
 | Unit + integration test coverage | ≥ 80% | — | — |
@@ -109,3 +109,60 @@ Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known is
 - Olist contains free-text customer reviews, which makes prompt injection from warehouse data a
   live threat rather than a hypothetical one. Control C6 addresses it, and the adversarial
   evaluation category will exercise it.
+
+### Step 2 — Postgres in Docker, read-only role, seeded dataset
+
+**Status:** ✅ Done · **Date:** 2026-08-24
+
+**Built**
+- `docker-compose.yml` with the `db` service (postgres:17), a named volume, a `pg_isready`
+  healthcheck, and `db/init` mounted as the init directory.
+- `db/init/00_bootstrap.sh` plus `db/init/sql/01_roles.sql`, `02_schema.sql`, `03_grants.sql`.
+  The SQL files live in a subdirectory so the shell script controls their order and passes
+  credentials in as psql variables instead of hard-coding them.
+- Schema `analytics` mirroring the Olist dataset faithfully (original column spellings included,
+  so real Kaggle CSVs load untransformed), plus `dim_date`, an `analytics.customer_contact`
+  table giving the sensitive-column policy a real surface, and the `v_order_revenue` view that
+  pre-aggregates items to order grain. Schema `agent` created empty for Step 3.
+- `db/seed/download.py` — three sources tried in order: local CSVs, Kaggle (via
+  `KAGGLE_USERNAME`/`KAGGLE_KEY`, no extra dependency), then the synthetic generator.
+- `db/seed/generate.py` — a deterministic Olist-shaped generator with **planted ground truth**.
+- `db/seed/load.py` — staging-table loader with `ON CONFLICT DO NOTHING` and foreign-key filters.
+- `scripts/seed_db.py`, `scripts/smoke.py`, `tests/conftest.py`,
+  `tests/integration/test_readonly_role.py`, `db/seed/README.md`.
+
+**Verification**
+- `docker compose up -d db` — healthy in 5s; the bootstrap applied all three SQL files with no
+  errors.
+- `python scripts/seed_db.py --source local` — ✅ 36,198 orders · 50,622 order items · 38,356
+  payments · 24,583 reviews · 36,198 customers · 2,400 products · 600 sellers · 730 dim_date
+  rows, period 2016-09 .. 2018-08, zero orphan rows, view returns 36,198 rows.
+- `python scripts/smoke.py` — ✅ **29 passed, 0 failed.** INSERT/UPDATE/DELETE/TRUNCATE/CREATE/
+  DROP/ALTER/CREATE INDEX/GRANT/CREATE ROLE all rejected with SQLSTATE 25006 (read-only
+  transaction); `pg_authid` and `COPY FROM '/etc/passwd'` rejected with 42501; the four
+  legitimate analytical reads all allowed; the grant surface asserted directly
+  (`has_schema_privilege('agent','USAGE')` is false, `usesuper` is false); the statement timeout
+  fires on `pg_sleep(5)`.
+- `pytest -q` — 29 passed. `ruff check .` — clean.
+
+**Deviations from the plan, and why**
+- The plan listed `api`, `ui` and `seed` services in this step's compose file. They are deferred
+  to Step 13, where the `Dockerfile` they all depend on is written. Shipping a compose file
+  referencing a non-existent build context would have been broken-on-arrival; until then
+  seeding runs from the host with `python scripts/seed_db.py`.
+- The plan assumed the Olist CSVs would simply be downloaded. Kaggle requires authentication, so
+  a **deterministic synthetic generator** was added as a third source. This turned out to be
+  more than a fallback: it is what gives the diagnostic evaluation questions real ground truth.
+- The design document named "customer name, email, phone, street address" as the sensitive
+  columns. The real Olist dataset contains none of those, so `analytics.customer_contact` was
+  added to carry exactly those columns (populated by the generator, empty on the Kaggle path),
+  and `customer_unique_id` plus precise `geolocation_lat`/`lng` were added to the sensitive set.
+  The policy is unchanged in substance and is now bound to columns that actually exist.
+
+**Planted ground truth for later steps**
+Shock month `2018-03`: net revenue falls 279,292 → 190,058 (−32%) while order volume stays on
+trend (1,741 → 1,791). Two real causes act together — the premium-category share drops from 0.28
+to 0.11, and orders with an `SP` seller run late at 0.34 vs 0.08, pushing cancellations from
+1.6% to 11.2%. One decoy: review scores fall in the same month, but downstream of the delays.
+One prompt-injection attempt sits in a review comment inside that month. All of it is written to
+`db/seed/raw/_manifest.json` so the eval suite reads ground truth instead of hard-coding it.

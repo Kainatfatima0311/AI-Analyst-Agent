@@ -1,8 +1,8 @@
 #!/bin/bash
 # Runs once, on first creation of the cluster. The Postgres entrypoint executes files placed
 # directly in /docker-entrypoint-initdb.d; the ordered .sql files live in the ./sql subdirectory
-# so that this script controls their order and can pass credentials in as psql variables
-# instead of hard-coding them.
+# so that this script controls their order and can pass credentials in as psql variables rather
+# than hard-coding them.
 set -euo pipefail
 
 SQL_DIR="/docker-entrypoint-initdb.d/sql"
@@ -16,6 +16,8 @@ run() {
   echo "[bootstrap] applying $(basename "$1")"
   psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
        --set ON_ERROR_STOP=1 --no-psqlrc --quiet \
+       --set db_name="$POSTGRES_DB" \
+       --set app_user="$POSTGRES_USER" \
        --set ro_user="$ANALYST_RO_USER" \
        --set ro_password="$ANALYST_RO_PASSWORD" \
        --set statement_timeout="$STATEMENT_TIMEOUT_MS" \

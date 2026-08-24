@@ -40,3 +40,7 @@ Thumbs.db
 
 # Docker local volumes
 .pgdata/
+
+# Claude Code local settings (per-developer, not shared)
+.claude/settings.local.json
+.claude/*.tmp.*
