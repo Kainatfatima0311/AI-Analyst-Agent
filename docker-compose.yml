@@ -1,0 +1,31 @@
+# Step 2 provides the database. The api, ui and seed services are added in Step 13,
+# once the Dockerfile exists; until then seed from the host with `python scripts/seed_db.py`.
+name: analyst-agent
+
+services:
+  db:
+    image: postgres:17
+    container_name: analyst-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-analyst}
+      POSTGRES_USER: ${POSTGRES_USER:-app_rw}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      # Consumed by db/init/00_bootstrap.sh when the cluster is first created.
+      ANALYST_RO_USER: ${ANALYST_RO_USER:-analyst_ro}
+      ANALYST_RO_PASSWORD: ${ANALYST_RO_PASSWORD:?set ANALYST_RO_PASSWORD in .env}
+      SQL_STATEMENT_TIMEOUT_MS: ${SQL_STATEMENT_TIMEOUT_MS:-15000}
+      SQL_IDLE_TX_TIMEOUT_MS: ${SQL_IDLE_TX_TIMEOUT_MS:-30000}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app_rw} -d ${POSTGRES_DB:-analyst}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  pgdata:
