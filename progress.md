@@ -11,8 +11,8 @@ Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known is
 | 0 | Repo skeleton, `plan.md`, `progress.md` | ✅ | 2026-08-24 | `chore(init)` |
 | 1 | Design document | ✅ | 2026-08-24 | `docs(design)` / `v0.1-design` |
 | 2 | Postgres in Docker, read-only role, seeded dataset | ✅ | 2026-08-24 | `feat(db)` |
-| 3 | Config, structured logging, run/trace/audit persistence | 🟨 | 2026-08-24 | — |
-| 4 | `sql_guard` — SQL safety layer | ⬜ | — | — |
+| 3 | Config, structured logging, run/trace/audit persistence | ✅ | 2026-08-24 | `feat(core)` |
+| 4 | `sql_guard` — SQL safety layer | 🟨 | — | — |
 | 5 | Metrics layer (approved KPI definitions) | ⬜ | — | — |
 | 6 | The five tools | ⬜ | — | — |
 | 7 | LangGraph state, checkpointer, LLM wrapper | ⬜ | — | — |
@@ -166,3 +166,64 @@ to 0.11, and orders with an `SP` seller run late at 0.34 vs 0.08, pushing cancel
 1.6% to 11.2%. One decoy: review scores fall in the same month, but downstream of the delays.
 One prompt-injection attempt sits in a review comment inside that month. All of it is written to
 `db/seed/raw/_manifest.json` so the eval suite reads ground truth instead of hard-coding it.
+
+### Step 3 — Config, structured logging, run/trace/audit persistence
+
+**Status:** ✅ Done · **Date:** 2026-08-24
+
+**Built**
+- `src/analyst_agent/config.py` — pydantic-settings. The two DSNs are **separate typed fields**
+  rather than one connection string with a role switch, so mis-wiring the tool layer is a
+  visible mistake instead of a silent privilege escalation. Per-node effort tiers
+  (`low`/`high`/`xhigh`), SQL safety limits, and budget caps all live here.
+- `src/analyst_agent/observability/logging.py` — structlog routed *through* stdlib logging, so
+  our events and uvicorn's / psycopg's output come out as one consistent JSON stream instead of
+  two interleaved formats. `run_id` / `step_id` / `node` / `tool` / `query_id` bind via
+  contextvars, so a node binds once and everything beneath it inherits the context. A
+  `redact_secrets` processor scrubs registered secrets from every value including nested dicts
+  and exception text; `truncate_sql` keeps log lines readable since the full statement is always
+  in `sql_audit` anyway.
+- `db/migrations/001_agent_state.sql` — schema `agent` with 9 tables: `runs`, `run_steps`,
+  `tool_calls`, `sql_audit`, `approvals`, `findings`, `hypotheses`, `charts`,
+  `schema_migrations`.
+- `scripts/migrate.py` — a plain migration runner with per-file checksums, so editing an
+  already-applied migration is detected rather than silently diverging. Deliberately not
+  Alembic: the schema carries security-relevant CHECK constraints and those should stay
+  reviewable as SQL.
+- `src/analyst_agent/db/engine.py` — two pools. The read-only pool additionally pins
+  `default_transaction_read_only=on` and the statement timeout at *session* level on top of the
+  role settings, and `assert_read_only()` turns a mis-pasted DSN into a startup failure instead
+  of an incident found later.
+- `src/analyst_agent/db/repository.py` — every self-observation write, plus `get_trace()`, the
+  full reconstruction the API and the UI evidence drawer are built on. A `step()` context
+  manager records node entry/exit and binds the log context in one place.
+- `tests/unit/test_logging.py` (13 tests), `tests/integration/test_repository.py` (14 tests).
+
+**Four invariants moved out of application code and into the schema**
+A CHECK constraint cannot be forgotten by a node written six steps from now, so the design
+document's promises are enforced by the database:
+
+| Constraint | What it prevents |
+|---|---|
+| `findings_require_evidence` | reporting a finding with no query behind it |
+| `hypotheses_require_a_test` | an untested hypothesis becoming a verdict |
+| `sql_audit_executed_implies_allowed` | a tool-layer bug recording an execution for a query the guard rejected |
+| `approvals_decision_is_attributed` | a decision with no decider and no timestamp |
+
+All four are asserted as tests that expect `CheckViolation`, not just documented.
+
+**Verification**
+- `python scripts/migrate.py` — ✅ applied `001_agent_state`; `--status` reports 1 applied, 0
+  pending. 9 tables and 10 check constraints present in schema `agent`.
+- `engine.assert_read_only()` — ✅ read-only pool verified as `analyst_ro`, non-superuser.
+- `pytest -q` — ✅ **56 passed** (13 logging/config unit, 14 repository integration, 29
+  read-only role).
+- `ruff check .` — clean. `mypy` — ✅ no issues in 18 source files.
+
+**Two real bugs found and fixed while verifying**
+- `ANTHROPIC_API_KEY=` (the empty placeholder that `.env.example` ships) was being read as a
+  *configured* empty key, so `require_api_key()` returned `""` and the failure would have
+  surfaced much later at the first model call. A `before` validator now treats blank as absent.
+- `ALLOWED_SCHEMAS=analytics` in `.env` raised a `SettingsError`, because pydantic-settings
+  tries to JSON-parse a tuple field from dotenv *before* validators run. Fixed with
+  `Annotated[..., NoDecode]` so the comma-splitting validator actually gets the raw string.

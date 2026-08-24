@@ -1,4 +1,4 @@
-.PHONY: help install lint format typecheck test test-unit test-integration guard db-up db-down seed smoke api ui evals docker-up docker-down clean
+.PHONY: help install lint format typecheck test test-unit test-integration guard db-up db-down migrate seed smoke api ui evals docker-up docker-down clean
 
 help:
 	@echo "install           install the package with dev extras"
@@ -7,6 +7,7 @@ help:
 	@echo "test              full pytest suite with coverage"
 	@echo "guard             the sql_guard hostile-query suite (security regression net)"
 	@echo "db-up / db-down   start / stop just Postgres"
+	@echo "migrate           apply pending SQL migrations from db/migrations/"
 	@echo "seed              load the Olist dataset into Postgres"
 	@echo "smoke             assert the read-only role really is read-only"
 	@echo "api / ui          run the API / the Streamlit interface locally"
@@ -42,6 +43,12 @@ db-up:
 
 db-down:
 	docker compose stop db
+
+migrate:
+	python scripts/migrate.py
+
+migrate-status:
+	python scripts/migrate.py --status
 
 seed:
 	python scripts/seed_db.py

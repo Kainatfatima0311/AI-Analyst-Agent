@@ -72,7 +72,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106"]      # asserts and dummy credentials in tests
+"tests/**" = ["S101", "S105", "S106", "S608"]   # asserts, dummy credentials, fabricated SQL strings
 "evals/**" = ["S101"]
 "db/seed/**" = ["S608", "S310", "S311"]      # COPY builder, authenticated download, seeded RNG
 
