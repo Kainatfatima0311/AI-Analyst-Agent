@@ -70,27 +70,40 @@ def test_write_statements_are_rejected(ro_dsn: str, sql: str) -> None:
 
 
 @pytest.mark.parametrize("sql", READ_STATEMENTS)
-def test_analytical_reads_are_allowed(ro_conn: psycopg.Connection, seeded: None, sql: str) -> None:
+def test_analytical_reads_are_allowed(
+    ro_conn: psycopg.Connection, seeded: None, sql: str
+) -> None:
     with ro_conn.cursor() as cur:
         cur.execute(sql)
         assert cur.fetchone() is not None
 
 
+def _single_value(cur: psycopg.Cursor) -> object:
+    """The one value a single-column query returned.
+
+    The connection uses ``dict_row`` to match ``db/engine.py``, and the key for a bare
+    expression or a SHOW is not worth predicting, so read the only value present.
+    """
+    row = cur.fetchone()
+    assert row is not None
+    assert isinstance(row, dict)
+    return next(iter(row.values()))
+
+
 @pytest.mark.parametrize(("label", "expression", "expected"), PRIVILEGES)
-def test_grant_surface(ro_conn: psycopg.Connection, label: str, expression: str, expected: bool) -> None:
+def test_grant_surface(
+    ro_conn: psycopg.Connection, label: str, expression: str, expected: bool
+) -> None:
     with ro_conn.cursor() as cur:
         cur.execute(f"SELECT {expression}")
-        row = cur.fetchone()
-        assert row is not None
-        assert bool(row[0]) is expected, f"{label}: expected {expected}, got {row[0]}"
+        actual = _single_value(cur)
+        assert bool(actual) is expected, f"{label}: expected {expected}, got {actual}"
 
 
 def test_session_is_read_only_by_default(ro_conn: psycopg.Connection) -> None:
     with ro_conn.cursor() as cur:
         cur.execute("SHOW default_transaction_read_only")
-        row = cur.fetchone()
-        assert row is not None
-        assert row[0] == "on"
+        assert _single_value(cur) == "on"
 
 
 def test_statement_timeout_fires(ro_dsn: str) -> None:
@@ -103,6 +116,4 @@ def test_statement_timeout_fires(ro_dsn: str) -> None:
 def test_statement_timeout_is_configured_on_the_role(ro_conn: psycopg.Connection) -> None:
     with ro_conn.cursor() as cur:
         cur.execute("SHOW statement_timeout")
-        row = cur.fetchone()
-        assert row is not None
-        assert row[0] not in ("0", "0ms"), "the role must carry a statement timeout"
+        assert _single_value(cur) not in ("0", "0ms"), "the role must carry a statement timeout"

@@ -12,8 +12,8 @@ Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known is
 | 1 | Design document | ✅ | 2026-08-24 | `docs(design)` / `v0.1-design` |
 | 2 | Postgres in Docker, read-only role, seeded dataset | ✅ | 2026-08-24 | `feat(db)` |
 | 3 | Config, structured logging, run/trace/audit persistence | ✅ | 2026-08-24 | `feat(core)` |
-| 4 | `sql_guard` — SQL safety layer | 🟨 | — | — |
-| 5 | Metrics layer (approved KPI definitions) | ⬜ | — | — |
+| 4 | `sql_guard` — SQL safety layer | ✅ | 2026-08-24 | `feat(sql-guard)` / `v0.2-sql-safety` |
+| 5 | Metrics layer (approved KPI definitions) | 🟨 | — | — |
 | 6 | The five tools | ⬜ | — | — |
 | 7 | LangGraph state, checkpointer, LLM wrapper | ⬜ | — | — |
 | 8 | Multi-hypothesis investigation loop | ⬜ | — | — |
@@ -33,6 +33,7 @@ Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known is
 | Diagnostic questions with ≥2 tested hypotheses | 100% | — | — |
 | Ambiguous questions correctly deferred to a human | ≥ 90% | — | — |
 | Unit + integration test coverage | ≥ 80% | — | — |
+| Hostile queries rejected | 100% | 79/79 | Step 4 |
 
 ---
 
@@ -227,3 +228,89 @@ All four are asserted as tests that expect `CheckViolation`, not just documented
 - `ALLOWED_SCHEMAS=analytics` in `.env` raised a `SettingsError`, because pydantic-settings
   tries to JSON-parse a tuple field from dotenv *before* validators run. Fixed with
   `Annotated[..., NoDecode]` so the comma-splitting validator actually gets the raw string.
+
+### Step 4 — `sql_guard`, the SQL safety layer
+
+**Status:** ✅ Done · **Date:** 2026-08-24 · **Tag:** `v0.2-sql-safety`
+
+**Built**
+- `sql_guard/errors.py` — `GuardVerdict` with `allowed` and `requires_approval` as *separate*
+  fields, because they answer different questions: a query can be structurally fine and still
+  need a human. Reason codes are stable strings so tests, the audit table and the eval graders
+  share one vocabulary.
+- `sql_guard/policy.py` — the policy as **data**: 20 denied node types, 30 denied functions,
+  forbidden schemas, and the sensitive-column registry. Reviewable on its own, separate from
+  the walk that applies it.
+- `sql_guard/catalog.py` — a committed `STATIC_CATALOG` snapshot (12 objects, 79 columns)
+  alongside `load_catalog()` from `information_schema`. The snapshot is what lets the whole
+  hostile-query suite run in CI **with no database**.
+- `sql_guard/column_policy.py` — three sensitivity tiers, because "sensitive" is not one thing.
+- `sql_guard/validator.py` — the AST walk.
+- `sql_guard/explain_gate.py` — `EXPLAIN` (never `ANALYZE`) with a cost ceiling; over it,
+  escalate rather than block.
+- `sql_guard/__init__.py` — `check()`, the single entry point, running the layers in order.
+
+**The finding that shaped the design**
+Probing sqlglot before writing anything showed that
+
+```sql
+WITH x AS (DELETE FROM analytics.orders RETURNING *) SELECT * FROM x
+```
+
+parses with a **`Select` at the root**. A root-statement-type check — the obvious
+implementation, and the one a keyword denylist amounts to — would have cleared a deletion.
+Denied node types are therefore matched *anywhere in the tree*, and the root check is only the
+first of six gates. Five variants of this attack are in the suite.
+
+**Three sensitivity tiers, each with a reason**
+
+| Tier | Columns | Rule | Why |
+|---|---|---|---|
+| `direct_identifier` | `customer_contact.{full_name,email,phone,street_address}` | restricted anywhere outside an approved aggregate, **including a WHERE filter** | filtering by an email address is a person-level lookup, not analysis |
+| `pseudonymous` | `customers.customer_unique_id` | only *projecting* it in the outermost select is restricted | grouping and joining on it is ordinary work — the approved repeat-customer metric needs exactly that; projecting it is what yields one row per person |
+| `precise_location` | `geolocation.{lat,lng}` | aggregate yes, return no; `min`/`max` excluded | `min(lat)` returns a real observed coordinate, which is a disclosure rather than an aggregate |
+
+A restricted column **escalates and is never silently stripped** — the reviewer sees exactly
+what was asked for, and the agent is not handed a quietly rewritten result to reason over.
+
+**Verification — the security regression net**
+`pytest tests/unit/test_sql_guard.py` → **127 passed**, no database required:
+
+- **79 hostile queries, all rejected.** 8 statement-stacking shapes, 5 DML-at-root, 5
+  DML-hidden-in-a-CTE, 8 DDL, 9 privilege/session/non-SELECT commands, 3 SELECT-shaped
+  non-reads (`INTO`, `FOR UPDATE`), 16 dangerous-function calls including three buried in
+  subqueries, 11 catalog/forbidden-schema reads, 5 out-of-allowlist objects, 3 unbounded
+  cartesian products, 4 unparseable or empty, and 6 comment/casing tricks.
+- **14 escalations** — restricted columns, wildcard projections, and scalar functions wrapping
+  a restricted column.
+- **18 legitimate queries, all allowed** — including both planted-cause diagnostic queries,
+  window functions, set operations, and the approved-aggregate cases. A guard that blocks real
+  work gets switched off, so this half of the corpus matters as much as the hostile half.
+- One asserted global property: **no hostile query ever produces runnable SQL** — a rejection
+  yields `rewritten_sql is None`, so there is nothing for a buggy caller to execute.
+
+Full suite: `pytest -q` → **190 passed**. `ruff` clean, `mypy` clean (24 files),
+`scripts/smoke.py` still 29/29.
+
+**Two real bugs the corpus caught**
+1. **`count(*)` was read as a wildcard projection.** The `*` in `count(*)` is an `exp.Star`, so
+   every `count(*)` over a table that happens to hold a restricted column escalated —
+   `SELECT geolocation_state, count(*) FROM analytics.geolocation GROUP BY 1` among them. A
+   guard that escalates ordinary aggregation is a guard that gets disabled. Fixed by skipping
+   a `Star` whose parent is a function.
+2. **A CTE could shadow a forbidden object — a genuine bypass.** CTE aliases must be excluded
+   from the catalog check, but the code skipped any table whose *name* matched a CTE alias.
+   So `WITH pg_authid AS (SELECT 1) SELECT * FROM pg_catalog.pg_authid` skipped the allowlist
+   entirely and was **allowed**. The same trick worked for `public.secrets`. In SQL a qualified
+   name can never resolve to a CTE, so only unqualified names are now treated as CTE
+   references. Both cases are regression tests.
+
+**Drift protection**
+`tests/integration/test_sql_guard_live.py` asserts `STATIC_CATALOG` still matches the live
+schema object-for-object and column-for-column. Without it, a migration could leave the unit
+suite validating against a schema that no longer exists — and passing while doing so.
+
+**Note**
+Changing the `ro_conn` test fixture to `dict_row` (matching what `db/engine.py` configures on
+the real pools) broke five Step 2 tests that indexed rows as tuples. They were updated rather
+than the fixture reverted: a test should exercise the row shape the production code assumes.

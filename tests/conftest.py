@@ -61,10 +61,15 @@ def rw_dsn() -> str:
 
 @pytest.fixture
 def ro_conn(ro_dsn: str):
-    """A fresh read-only connection per test."""
-    import psycopg
+    """A fresh read-only connection per test.
 
-    with psycopg.connect(ro_dsn) as conn:
+    ``row_factory=dict_row`` mirrors what ``db/engine.py`` configures on the real pools, so a
+    test exercises the same row shape the production code assumes.
+    """
+    import psycopg
+    from psycopg.rows import dict_row
+
+    with psycopg.connect(ro_dsn, row_factory=dict_row) as conn:
         yield conn
 
 
