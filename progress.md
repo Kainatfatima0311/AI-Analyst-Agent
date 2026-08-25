@@ -14,8 +14,8 @@ Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known is
 | 3 | Config, structured logging, run/trace/audit persistence | ✅ | 2026-08-24 | `feat(core)` |
 | 4 | `sql_guard` — SQL safety layer | ✅ | 2026-08-24 | `feat(sql-guard)` / `v0.2-sql-safety` |
 | 5 | Metrics layer (approved KPI definitions) | ✅ | 2026-08-25 | `feat(metrics)` |
-| 6 | The five tools | 🟨 | — | — |
-| 7 | LangGraph state, checkpointer, LLM wrapper | ⬜ | — | — |
+| 6 | The five tools | ✅ | 2026-08-25 | `feat(tools)` |
+| 7 | LangGraph state, checkpointer, LLM wrapper | 🟨 | — | — |
 | 8 | Multi-hypothesis investigation loop | ⬜ | — | — |
 | 9 | FastAPI business question API | ⬜ | — | — |
 | 10 | Human approval gates and recovery | ⬜ | — | — |
@@ -385,3 +385,76 @@ wrong formula.
 - Two caveats written with a colon in them parsed as YAML mappings rather than strings. The
   loader's validation caught both at load time, which is the argument for validating definitions
   at startup rather than trusting them.
+
+### Step 6 — The five tools
+
+**Status:** ✅ Done · **Date:** 2026-08-25
+
+**Built**
+- `tools/base.py` — one `Tool` base class carrying validation, timing, the audit write and
+  logging, so a new tool cannot quietly skip the audit. Plus `anthropic_tool_schema`, which
+  makes a pydantic model `strict`-compatible: `additionalProperties: false`, every property in
+  `required`, and optional arguments expressed as **nullable** rather than omitted.
+- `tools/frames.py` — a bounded LRU frame store with **rehydration from the audit trail**.
+- `tools/metric_lookup.py`, `tools/schema_inspector.py`, `tools/sql_runner.py`,
+  `tools/python_analysis.py`, `tools/chart_builder.py`, `tools/palette.py`, `tools/registry.py`.
+
+**Two conventions that shaped every tool**
+- **A refusal is a result, not an error.** When a tool declines — no approved metric, a query the
+  guard rejected, a chart that would mislead — it returns `ok=True` with a `refusal`. Conflating
+  that with a crash would lose the distinction in the trace and would teach the model to retry
+  rather than change course. `tool_calls` has a separate `refusal` column for exactly this.
+- **Nothing returns silently empty.** An empty result set comes back as a success whose summary
+  says *check whether the filter is right before concluding there is no data*.
+
+**`python_analysis`: the deliberate limitation**
+The obvious implementation is to let the model write pandas and `exec` it. Instead the tool
+exposes **eight enumerated operations** — describe, group_by, share_of_total,
+period_over_period, rolling, correlation, top_n, linear_fit — each implemented here and validated
+against the frame's real columns. Some analyses are therefore not expressible; that is recorded
+as a known limitation. What it buys is that **no model-authored code executes anywhere in this
+system**. The `correlation` summary carries its own warning that association is not cause, since
+the summary is the part the model reliably reads.
+
+**Frames survive a restart**
+`python_analysis` and `chart_builder` work on a previous `query_id`, so that result has to live
+somewhere between calls. Keeping it purely in memory breaks the recovery Step 10 requires, so a
+missing frame is **rebuilt by re-running the statement recorded in `sql_audit`**. Only queries the
+audit records as `allowed` and `executed` can be rehydrated — asserted by a test — so this cannot
+become a route to run something the guard refused.
+
+**Charts: palette validated, not chosen**
+The categorical palette was run through the data-viz validator rather than picked by eye: on the
+light surface all checks pass (worst adjacent CVD ΔE 9.1, normal-vision 19.6) with a contrast warn
+on three slots that obliges *relief* — every chart is returned alongside its data and rendered
+next to the table, which is that relief. Dark passes outright. Three rules are enforced in code:
+no dual axis ever (refused, with the alternatives named); hues assigned in fixed slot order and
+never cycled, with the tail folding into "Other" **and the fold reported**; and a legend only for
+two or more series. Scatter compares every pair at once and the full eight cannot clear the
+all-pairs floors, so scatter caps at the three slots that do.
+
+**Verification**
+- `pytest tests/unit/test_tool_base.py` — **21 passed**, no database. Schema strictness, the
+  refusal-versus-error contract, invalid and unknown arguments, and a check that **every argument
+  of every tool is documented** — an undocumented argument is one the model will guess at.
+- `pytest tests/integration/test_tools.py` — **26 passed**. All five tools, their refusal paths,
+  frame rehydration, the rejected-query rehydration guard, series folding, the scatter cap, and a
+  chain test asserting `metric_lookup → sql_runner → python_analysis → chart_builder` is fully
+  accounted for in the trace with a duration on every call.
+- Full suite: **345 passed**. `ruff` clean, `mypy` clean (35 files). The Step 4 guard suite is
+  still 127/127.
+
+**Two real bugs found while verifying**
+1. **Every monetary figure reached the model as a string.** Postgres returns `numeric` as a
+   `Decimal`, and a `Decimal` has neither `isoformat` nor `item`, so the coercion helper fell
+   through to `str()` and `sum(oi.price)` arrived as `"139184.93"`. The model would then either
+   compare numbers lexically or burn a turn parsing them — exactly what that helper existed to
+   prevent. `Decimal` is now handled first and explicitly, with a test asserting the types.
+2. **Foreign keys came back empty for every table.** `information_schema.constraint_column_usage`
+   only returns rows for tables the current user *owns*, so as `analyst_ro` every table looked
+   unrelated to every other — and the agent needs those join paths to write correct SQL. Rewritten
+   against `pg_constraint`, which is readable, with a test asserting `order_items` resolves all
+   three of its parents.
+
+Also caught: the Plotly spec contained numpy arrays, which psycopg cannot store as `jsonb`.
+Serialising through Plotly's own encoder fixes it and is cheaper than writing a converter.
