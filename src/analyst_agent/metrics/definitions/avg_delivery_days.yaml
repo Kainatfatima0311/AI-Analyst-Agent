@@ -1,0 +1,26 @@
+name: avg_delivery_days
+version: 1
+title: Average delivery days
+description: >
+  Mean number of days from purchase to delivery, over delivered orders only.
+owner: logistics-analytics
+grain: order
+unit: days
+aliases: [delivery time, lead time, days to deliver, shipping time]
+measure: >
+  avg(EXTRACT(EPOCH FROM (o.order_delivered_customer_date - o.order_purchase_timestamp))
+      / 86400.0)
+from_sql: "analytics.orders o"
+where_sql: "o.order_status = 'delivered' AND o.order_delivered_customer_date IS NOT NULL"
+date_column: "o.order_purchase_timestamp"
+dimensions:
+  month:
+    sql: "to_char(o.order_purchase_timestamp, 'YYYY-MM')"
+    label: Month
+  customer_state:
+    sql: "c.customer_state"
+    label: Customer state
+    join: "JOIN analytics.customers c ON c.customer_id = o.customer_id"
+caveats:
+  - A mean, so a few very late orders move it; pair it with on_time_delivery_rate.
+  - Delivered orders only, so it understates delay when many orders are still open.

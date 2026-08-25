@@ -1,0 +1,24 @@
+name: cancellation_rate
+version: 1
+title: Cancellation rate
+description: >
+  Share of orders whose status is cancelled. Unlike most metrics here, cancelled orders are
+  deliberately included in the denominator - they are the subject rather than an exclusion.
+owner: analytics-team
+grain: order
+unit: ratio
+aliases: [cancel rate, cancellations, share cancelled]
+measure: "avg(CASE WHEN o.order_status = 'canceled' THEN 1.0 ELSE 0.0 END)"
+from_sql: "analytics.orders o"
+date_column: "o.order_purchase_timestamp"
+dimensions:
+  month:
+    sql: "to_char(o.order_purchase_timestamp, 'YYYY-MM')"
+    label: Month
+  customer_state:
+    sql: "c.customer_state"
+    label: Customer state
+    join: "JOIN analytics.customers c ON c.customer_id = o.customer_id"
+caveats:
+  - "No where_sql clause: the whole point is that cancelled orders stay in the denominator."
+  - Measured at order grain, so it is unaffected by how many items an order had.

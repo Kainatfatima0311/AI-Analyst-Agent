@@ -1,0 +1,43 @@
+name: revenue
+version: 1
+title: Net revenue
+description: >
+  Sum of item prices for orders that were not cancelled. Freight is excluded, because freight
+  is a cost passed through to the customer rather than product revenue; use gross_revenue when
+  the freight component is wanted, or freight_ratio to look at freight on its own.
+owner: analytics-team
+grain: order_item
+unit: currency
+aliases: [sales, net sales, turnover, gmv, total revenue]
+measure: "sum(oi.price)"
+from_sql: |
+  analytics.orders o
+  JOIN analytics.order_items oi ON oi.order_id = o.order_id
+where_sql: "o.order_status <> 'canceled'"
+date_column: "o.order_purchase_timestamp"
+dimensions:
+  month:
+    sql: "to_char(o.order_purchase_timestamp, 'YYYY-MM')"
+    label: Month
+  year:
+    sql: "EXTRACT(YEAR FROM o.order_purchase_timestamp)::int"
+    label: Year
+  order_status:
+    sql: "o.order_status"
+    label: Order status
+  customer_state:
+    sql: "c.customer_state"
+    label: Customer state
+    join: "JOIN analytics.customers c ON c.customer_id = o.customer_id"
+  product_category:
+    sql: "p.product_category_name"
+    label: Product category
+    join: "JOIN analytics.products p ON p.product_id = oi.product_id"
+  seller_state:
+    sql: "s.seller_state"
+    label: Seller state
+    join: "JOIN analytics.sellers s ON s.seller_id = oi.seller_id"
+caveats:
+  - Excludes cancelled orders, so it will not reconcile with a raw sum over order_items.
+  - Excludes freight. Gross revenue including freight is a separate approved metric.
+  - Recognised at purchase time, not at delivery time.

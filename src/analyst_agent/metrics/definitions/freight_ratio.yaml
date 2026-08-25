@@ -1,0 +1,30 @@
+name: freight_ratio
+version: 1
+title: Freight as a share of revenue
+description: >
+  Total freight divided by total item price, for orders that were not cancelled. Useful when
+  net and gross revenue diverge and the question is why.
+owner: analytics-team
+grain: order_item
+unit: ratio
+aliases: [freight share, shipping cost ratio, freight percentage]
+measure: "sum(oi.freight_value) / NULLIF(sum(oi.price), 0)"
+from_sql: |
+  analytics.orders o
+  JOIN analytics.order_items oi ON oi.order_id = o.order_id
+where_sql: "o.order_status <> 'canceled'"
+date_column: "o.order_purchase_timestamp"
+dimensions:
+  month:
+    sql: "to_char(o.order_purchase_timestamp, 'YYYY-MM')"
+    label: Month
+  product_category:
+    sql: "p.product_category_name"
+    label: Product category
+    join: "JOIN analytics.products p ON p.product_id = oi.product_id"
+  seller_state:
+    sql: "s.seller_state"
+    label: Seller state
+    join: "JOIN analytics.sellers s ON s.seller_id = oi.seller_id"
+caveats:
+  - A ratio of sums. Heavy or bulky categories carry a structurally higher freight share.

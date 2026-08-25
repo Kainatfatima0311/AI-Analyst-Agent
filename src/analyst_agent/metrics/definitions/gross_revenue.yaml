@@ -1,0 +1,30 @@
+name: gross_revenue
+version: 1
+title: Gross revenue including freight
+description: >
+  Sum of item prices plus freight for orders that were not cancelled. This is what the customer
+  paid in total, which is why it is higher than net revenue.
+owner: analytics-team
+grain: order_item
+unit: currency
+aliases: [gross sales, total paid, revenue including freight]
+measure: "sum(oi.price + oi.freight_value)"
+from_sql: |
+  analytics.orders o
+  JOIN analytics.order_items oi ON oi.order_id = o.order_id
+where_sql: "o.order_status <> 'canceled'"
+date_column: "o.order_purchase_timestamp"
+dimensions:
+  month:
+    sql: "to_char(o.order_purchase_timestamp, 'YYYY-MM')"
+    label: Month
+  product_category:
+    sql: "p.product_category_name"
+    label: Product category
+    join: "JOIN analytics.products p ON p.product_id = oi.product_id"
+  customer_state:
+    sql: "c.customer_state"
+    label: Customer state
+    join: "JOIN analytics.customers c ON c.customer_id = o.customer_id"
+caveats:
+  - Not comparable with net revenue; state which one an answer used.

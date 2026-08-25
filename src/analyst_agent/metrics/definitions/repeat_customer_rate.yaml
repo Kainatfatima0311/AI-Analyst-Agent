@@ -1,0 +1,36 @@
+name: repeat_customer_rate
+version: 1
+title: Repeat customer rate
+description: >
+  Share of people who placed more than one non-cancelled order. Counted on
+  customer_unique_id, which is the person-level key - customer_id is per order and would
+  make every customer look new.
+owner: analytics-team
+grain: person
+unit: ratio
+shape: custom
+aliases: [repeat rate, returning customers, retention, repeat purchase rate]
+custom_sql: |
+  WITH per_person AS (
+      SELECT c.customer_unique_id, count(DISTINCT o.order_id) AS order_count
+      FROM analytics.orders o
+      JOIN analytics.customers c ON c.customer_id = o.customer_id
+      WHERE o.order_status <> 'canceled'
+        AND (%(date_from)s::timestamp IS NULL
+             OR o.order_purchase_timestamp >= %(date_from)s::timestamp)
+        AND (%(date_to)s::timestamp IS NULL
+             OR o.order_purchase_timestamp < %(date_to)s::timestamp)
+      GROUP BY 1
+  )
+  SELECT
+      count(*) FILTER (WHERE order_count > 1)::numeric / NULLIF(count(*), 0)
+          AS repeat_customer_rate,
+      count(*) AS people
+  FROM per_person
+caveats:
+  - >
+    Groups by customer_unique_id without ever projecting it, which is what keeps it inside the
+    sensitive-column policy: grouping on a person-level key is analysis, returning one row per
+    person is not.
+  - A short window understates the rate, because a second order may fall outside it.
+  - Cancelled orders do not count towards being a repeat customer.

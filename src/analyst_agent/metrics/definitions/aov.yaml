@@ -1,0 +1,33 @@
+name: aov
+version: 1
+title: Average order value
+description: >
+  Net revenue divided by the number of orders. Computed as a ratio of the two approved
+  quantities rather than as an average of per-order averages, which would weight small orders
+  equally with large ones.
+owner: analytics-team
+grain: order
+unit: currency
+aliases: [average order value, basket size, average basket, average ticket]
+measure: "sum(oi.price) / NULLIF(count(DISTINCT o.order_id), 0)"
+from_sql: |
+  analytics.orders o
+  JOIN analytics.order_items oi ON oi.order_id = o.order_id
+where_sql: "o.order_status <> 'canceled'"
+date_column: "o.order_purchase_timestamp"
+dimensions:
+  month:
+    sql: "to_char(o.order_purchase_timestamp, 'YYYY-MM')"
+    label: Month
+  product_category:
+    sql: "p.product_category_name"
+    label: Product category
+    join: "JOIN analytics.products p ON p.product_id = oi.product_id"
+  customer_state:
+    sql: "c.customer_state"
+    label: Customer state
+    join: "JOIN analytics.customers c ON c.customer_id = o.customer_id"
+caveats:
+  - A ratio of sums, not an average of ratios. The two differ and the difference matters.
+  - NULLIF guards the empty-period case so it returns null rather than raising.
+  - Excludes freight, matching net revenue.

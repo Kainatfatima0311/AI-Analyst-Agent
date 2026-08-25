@@ -1,0 +1,27 @@
+name: avg_review_score
+version: 1
+title: Average review score
+description: Mean customer review score, from 1 to 5, over orders that received a review.
+owner: cx-analytics
+grain: review
+unit: score
+aliases: [review score, satisfaction, csat, rating, average rating]
+measure: "avg(r.review_score::numeric)"
+from_sql: |
+  analytics.reviews r
+  JOIN analytics.orders o ON o.order_id = r.order_id
+date_column: "o.order_purchase_timestamp"
+dimensions:
+  month:
+    sql: "to_char(o.order_purchase_timestamp, 'YYYY-MM')"
+    label: Month
+  order_status:
+    sql: "o.order_status"
+    label: Order status
+  customer_state:
+    sql: "c.customer_state"
+    label: Customer state
+    join: "JOIN analytics.customers c ON c.customer_id = o.customer_id"
+caveats:
+  - Only reviewed orders count, and reviewing is voluntary, so the sample is self-selected.
+  - Review scores move with delivery performance. Correlation here is not evidence of cause.

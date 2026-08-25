@@ -1,0 +1,36 @@
+name: seller_concentration
+version: 1
+title: Top-10 seller revenue share
+description: >
+  Share of net revenue earned by the ten largest sellers. A rising value means the marketplace
+  is leaning on fewer sellers, which is a concentration risk worth surfacing.
+owner: marketplace-analytics
+grain: seller
+unit: ratio
+shape: custom
+aliases: [seller concentration, top seller share, marketplace concentration]
+custom_sql: |
+  WITH seller_revenue AS (
+      SELECT oi.seller_id, sum(oi.price) AS revenue
+      FROM analytics.orders o
+      JOIN analytics.order_items oi ON oi.order_id = o.order_id
+      WHERE o.order_status <> 'canceled'
+        AND (%(date_from)s::timestamp IS NULL
+             OR o.order_purchase_timestamp >= %(date_from)s::timestamp)
+        AND (%(date_to)s::timestamp IS NULL
+             OR o.order_purchase_timestamp < %(date_to)s::timestamp)
+      GROUP BY 1
+  ), ranked AS (
+      SELECT revenue,
+             row_number() OVER (ORDER BY revenue DESC) AS rank,
+             sum(revenue) OVER () AS total_revenue
+      FROM seller_revenue
+  )
+  SELECT
+      sum(revenue) FILTER (WHERE rank <= 10) / NULLIF(max(total_revenue), 0)
+          AS top10_seller_revenue_share,
+      count(*) AS sellers
+  FROM ranked
+caveats:
+  - Ten is a fixed cut-off, not a threshold derived from the data.
+  - "Sensitive to the window: a short period favours whoever happened to sell in it."

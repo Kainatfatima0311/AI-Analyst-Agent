@@ -1,0 +1,33 @@
+name: on_time_delivery_rate
+version: 1
+title: On-time delivery rate
+description: >
+  Share of delivered orders that reached the customer on or before the estimated delivery date.
+  Only delivered orders are in scope: an order still in transit is not yet late, and counting it
+  as late would make the metric drift with whatever is currently open.
+owner: logistics-analytics
+grain: order
+unit: ratio
+aliases: [on time rate, delivery performance, otd, punctuality]
+measure: >
+  avg(CASE WHEN o.order_delivered_customer_date <= o.order_estimated_delivery_date
+           THEN 1.0 ELSE 0.0 END)
+from_sql: "analytics.orders o"
+where_sql: "o.order_status = 'delivered' AND o.order_delivered_customer_date IS NOT NULL"
+date_column: "o.order_purchase_timestamp"
+dimensions:
+  month:
+    sql: "to_char(o.order_purchase_timestamp, 'YYYY-MM')"
+    label: Month
+  customer_state:
+    sql: "c.customer_state"
+    label: Customer state
+    join: "JOIN analytics.customers c ON c.customer_id = o.customer_id"
+  seller_state:
+    sql: "s.seller_state"
+    label: Seller state
+    join: "JOIN analytics.order_items oi ON oi.order_id = o.order_id JOIN analytics.sellers s ON s.seller_id = oi.seller_id"
+caveats:
+  - Delivered orders only. Orders in transit are excluded rather than assumed on time.
+  - Dated by purchase month, not delivery month, so a month's rate can move as orders land.
+  - Broken down by seller state, an order with sellers in two states counts in both.

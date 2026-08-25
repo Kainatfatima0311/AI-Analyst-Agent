@@ -1,4 +1,4 @@
-.PHONY: help install lint format typecheck test test-unit test-integration guard db-up db-down migrate seed smoke api ui evals docker-up docker-down clean
+.PHONY: help install lint format typecheck test test-unit test-integration guard db-up db-down migrate seed smoke catalog api ui evals docker-up docker-down clean
 
 help:
 	@echo "install           install the package with dev extras"
@@ -10,6 +10,7 @@ help:
 	@echo "migrate           apply pending SQL migrations from db/migrations/"
 	@echo "seed              load the Olist dataset into Postgres"
 	@echo "smoke             assert the read-only role really is read-only"
+	@echo "catalog           regenerate docs/metrics-catalog.md from the YAML definitions"
 	@echo "api / ui          run the API / the Streamlit interface locally"
 	@echo "evals             run the evaluation suite and write a report"
 	@echo "docker-up/-down   the whole stack"
@@ -55,6 +56,9 @@ seed:
 
 smoke:
 	python scripts/smoke.py
+
+catalog:
+	python scripts/generate_metrics_catalog.py
 
 api:
 	uvicorn analyst_agent.api.main:app --reload --port 8000

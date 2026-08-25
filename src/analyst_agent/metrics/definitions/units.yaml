@@ -1,0 +1,28 @@
+name: units
+version: 1
+title: Units sold
+description: Number of item lines sold on orders that were not cancelled.
+owner: analytics-team
+grain: order_item
+unit: count
+aliases: [items sold, quantity, item count, volume]
+measure: "count(oi.order_item_id)"
+from_sql: |
+  analytics.orders o
+  JOIN analytics.order_items oi ON oi.order_id = o.order_id
+where_sql: "o.order_status <> 'canceled'"
+date_column: "o.order_purchase_timestamp"
+dimensions:
+  month:
+    sql: "to_char(o.order_purchase_timestamp, 'YYYY-MM')"
+    label: Month
+  product_category:
+    sql: "p.product_category_name"
+    label: Product category
+    join: "JOIN analytics.products p ON p.product_id = oi.product_id"
+  seller_state:
+    sql: "s.seller_state"
+    label: Seller state
+    join: "JOIN analytics.sellers s ON s.seller_id = oi.seller_id"
+caveats:
+  - One item line is one unit; the dataset carries no per-line quantity column.

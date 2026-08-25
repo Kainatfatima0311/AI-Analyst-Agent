@@ -13,8 +13,8 @@ Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known is
 | 2 | Postgres in Docker, read-only role, seeded dataset | ✅ | 2026-08-24 | `feat(db)` |
 | 3 | Config, structured logging, run/trace/audit persistence | ✅ | 2026-08-24 | `feat(core)` |
 | 4 | `sql_guard` — SQL safety layer | ✅ | 2026-08-24 | `feat(sql-guard)` / `v0.2-sql-safety` |
-| 5 | Metrics layer (approved KPI definitions) | 🟨 | — | — |
-| 6 | The five tools | ⬜ | — | — |
+| 5 | Metrics layer (approved KPI definitions) | ✅ | 2026-08-25 | `feat(metrics)` |
+| 6 | The five tools | 🟨 | — | — |
 | 7 | LangGraph state, checkpointer, LLM wrapper | ⬜ | — | — |
 | 8 | Multi-hypothesis investigation loop | ⬜ | — | — |
 | 9 | FastAPI business question API | ⬜ | — | — |
@@ -314,3 +314,74 @@ suite validating against a schema that no longer exists — and passing while do
 Changing the `ro_conn` test fixture to `dict_row` (matching what `db/engine.py` configures on
 the real pools) broke five Step 2 tests that indexed rows as tuples. They were updated rather
 than the fixture reverted: a test should exercise the row shape the production code assumes.
+
+### Step 5 — Metrics layer (approved KPI definitions)
+
+**Status:** ✅ Done · **Date:** 2026-08-25
+
+**Built**
+- `metrics/loader.py` — pydantic models for a definition, with `extra="forbid"` so a typo in a
+  field name fails at startup rather than being silently ignored, and a shape validator that
+  refuses a half-filled definition.
+- `metrics/definitions/*.yaml` — **12 approved metrics**: `revenue`, `gross_revenue`, `orders`,
+  `units`, `aov`, `cancellation_rate`, `on_time_delivery_rate`, `avg_delivery_days`,
+  `avg_review_score`, `freight_ratio`, `repeat_customer_rate`, `seller_concentration`.
+  73 lookup keys across names, titles and aliases.
+- `metrics/registry.py` — resolution and rendering.
+- `scripts/generate_metrics_catalog.py` and the generated
+  [docs/metrics-catalog.md](docs/metrics-catalog.md) (522 lines).
+
+**The design decision that does the real work**
+A metric is deliberately **not** "a blob of SQL". It declares an aggregate expression, the tables
+it reads, its filter, its date column, and an allow-list of dimensions each carrying a reviewed
+SQL expression. The registry assembles the statement from those parts, and values travel as
+bound parameters.
+
+The consequence is structural rather than advisory: **for an approved metric, no free text from
+the model reaches SQL.** The model picks a *name* — `revenue`, broken down by `product_category`,
+filtered to `month = 2018-03` — and every name maps to an expression a human wrote and reviewed.
+A hostile filter value stays a value; the test asserting that a `'; DROP TABLE ...` filter comes
+back as a bound parameter and returns zero rows is the proof.
+
+Two metrics (`repeat_customer_rate`, `seller_concentration`) genuinely do not fit that mould —
+one needs a per-person subquery, the other a window function. They declare `shape: custom` and
+carry their own statement, and are held to the same bar a different way: every rendered metric,
+custom or not, is asserted to pass `sql_guard`.
+
+**Where the two halves of the project meet**
+`repeat_customer_rate` groups on `customer_unique_id` and never projects it. That is exactly what
+the `pseudonymous` tier from Step 4 was designed to permit, and it is why the tier exists: a
+blanket ban on the person key would have made the approved retention metric need human approval
+on every single run. The test asserting the key is absent from the outermost projection pins that
+down.
+
+**Verification**
+- `pytest tests/unit/test_metrics_registry.py` — **55 passed**, no database. Covers alias
+  resolution across 21 phrasings, refusal of 8 unapproved terms (`ltv`, `churn`, `gross margin`,
+  `conversion rate`, …), suggestions on a near miss, rejection of duplicate names and of an
+  ambiguous alias, parameter binding, injection-in-a-filter-value, undeclared dimensions,
+  join deduplication, and custom-shape rules.
+- `pytest tests/integration/test_metric_sql.py` — **53 passed**. Every one of the 12 metrics is
+  asserted to (a) pass `sql_guard`, (b) execute and return a non-null number over the whole
+  dataset, (c) execute over a date window, and (d) work for **every dimension it declares** —
+  a wrong join or expression would otherwise only surface mid-run.
+- Three tests reach through the metric layer to the planted ground truth: the revenue drop in
+  `2018-03`, the category mix shift, and the cancellation spike. A fourth asserts the **decoy**
+  moves too — review scores fall in the same month — because the trap has to genuinely be in the
+  data for Step 8's refutation logic to be worth testing.
+- Full suite: `pytest -q` → **298 passed**. `ruff` clean, `mypy` clean (26 files).
+
+**Catalogue freshness is a test**
+`docs/metrics-catalog.md` is generated, and a unit test runs the generator with `--check` and
+fails if the committed file is stale. A hand-edited catalogue that disagrees with the registry
+would be worse than having none: a reviewer would be checking the agent's arithmetic against the
+wrong formula.
+
+**Two small things caught while building**
+- Dimensions initially referenced aliases (`c.`, `p.`, `s.`) that the base `from_sql` did not
+  provide. Each dimension now declares the `join` it needs, appended only when that dimension is
+  used — carrying every possible join would both slow the common case and risk changing the row
+  count through a join that fans out.
+- Two caveats written with a colon in them parsed as YAML mappings rather than strings. The
+  loader's validation caught both at load time, which is the argument for validating definitions
+  at startup rather than trusting them.
