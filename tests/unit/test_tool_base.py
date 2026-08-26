@@ -126,11 +126,13 @@ def test_an_unknown_argument_is_rejected() -> None:
 # --- the registry -----------------------------------------------------------
 
 
-def test_the_registry_exposes_all_five_tools() -> None:
+def test_the_registry_exposes_every_tool() -> None:
     registry = ToolRegistry()
-    assert len(registry) == 5
+    assert len(registry) == 6
     assert set(registry.names) == {
         "metric_lookup",
+        # Computes an approved metric by name, so no free text reaches SQL for those figures.
+        "metric_query",
         "schema_inspector",
         "sql_runner",
         "python_analysis",

@@ -1,21 +1,32 @@
-"""The graph, version 1: a linear walking skeleton.
+"""The graph.
 
-    intake -> clarify_gate -> resolve_metrics -> plan -> author_sql -> execute
-           -> interpret -> synthesize
+    intake -> clarify_gate -> resolve_metrics -> gather_context -> plan
+           -> author_sql -> execute -> interpret -> analyse
+           -> materiality_check -> generate_hypotheses -> [test each] -> reconcile
+           -> synthesize -> visualize
 
-Three conditional edges already, because they are where the policy lives rather than decoration
-on a straight line:
+Two things about this shape are deliberate.
 
-* ``clarify_gate`` routes to END when the question cannot be answered as asked. Stopping to ask
-  is a correct outcome, and the run stays resumable at ``clarifying`` until the answer arrives.
-* ``execute`` routes to END when the guard escalated, so the run parks at ``awaiting_approval``
-  rather than working around the block.
-* ``author_sql`` routes straight to ``synthesize`` when the budget is spent, which is what turns
-  exhaustion into a partial answer instead of an exception.
+**There is no `interpret -> synthesize` edge.** Every path to an answer passes the materiality
+gate, which is what makes "a material finding needs two tested explanations" structural rather
+than a request in the prompt.
 
-Step 8 replaces the single ``interpret -> synthesize`` edge with the investigation loop, and that
-edge becomes the one that enforces "a material finding needs two tested hypotheses". The shape
-here is deliberately the shape that edge will be inserted into.
+**SQL authoring does not use tool calling; three other nodes do.** `author_sql` goes through
+structured output so exactly one statement per turn reaches the guard and the audit. But
+`gather_context`, `analyse` and `visualize` each run a bounded tool loop, because whether looking
+at the schema, deriving a period-over-period view or drawing a chart *helps* depends on what the
+data turned out to look like - and that cannot be scheduled from outside the run.
+
+The conditional edges are where the policy lives:
+
+* `clarify_gate` routes to END when the question cannot be answered as asked. Stopping to ask is
+  a correct outcome, and the run stays resumable until the answer arrives.
+* `execute` routes to END when the guard escalated, so the run parks rather than working around
+  the block - and back to `execute` when a human has approved, so the *same* statement runs.
+* `author_sql`, `materiality_check` and the test loop all route to `synthesize` when the budget
+  is spent, which turns exhaustion into a partial answer instead of an exception.
+* `materiality_check` is the gate: while a material finding lacks two tested explanations, the
+  only edge out goes to hypothesis generation.
 """
 
 from __future__ import annotations
@@ -25,19 +36,23 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from analyst_agent.agent import approvals
+from analyst_agent.agent.budget import Budget
 from analyst_agent.agent.checkpointer import get_checkpointer, thread_config
 from analyst_agent.agent.llm import LLM, LLMRefusalError, get_llm
 from analyst_agent.agent.nodes import (
     NodeContext,
+    make_analyse,
     make_author_sql,
     make_clarify_gate,
+    make_compute_metrics,
     make_execute,
+    make_gather_context,
     make_intake,
     make_interpret,
     make_plan,
     make_resolve_metrics,
     make_synthesize,
+    make_visualize,
 )
 from analyst_agent.agent.nodes.investigate import (
     MIN_HYPOTHESES,
@@ -66,8 +81,26 @@ def _after_clarify(state: AnalystState) -> str:
     return END if state.get("status") == "clarifying" else "resolve_metrics"
 
 
+def _after_compute(state: AnalystState) -> str:
+    """Straight to interpretation when an approved metric already answered the question.
+
+    Falling through to `author_sql` regardless would mean re-asking in SQL for a figure the
+    registry just produced - a second query for the same number, and one the model wrote itself.
+    """
+    if state.get("truncation_reason"):
+        return "synthesize"
+    return "interpret" if state.get("_last_result") else "author_sql"
+
+
 def _after_author(state: AnalystState) -> str:
-    """A spent budget routes to a partial answer rather than to another query."""
+    """A spent budget asks for more, or routes to a partial answer.
+
+    Parking here is approval point 3: the run stops and waits rather than truncating silently,
+    because whether an unfinished investigation deserves more budget is a judgement a person is
+    better placed to make than the agent.
+    """
+    if state.get("status") == "awaiting_approval":
+        return END
     if state.get("truncation_reason"):
         return "synthesize"
     return "execute" if state.get("_draft") else "synthesize"
@@ -178,34 +211,51 @@ def build_graph(
         ("intake", make_intake),
         ("clarify_gate", make_clarify_gate),
         ("resolve_metrics", make_resolve_metrics),
+        ("gather_context", make_gather_context),
         ("plan", make_plan),
+        ("compute_metrics", make_compute_metrics),
         ("author_sql", make_author_sql),
         ("execute", make_execute),
         ("interpret", make_interpret),
+        ("analyse", make_analyse),
         ("materiality_check", make_materiality_check),
         ("generate_hypotheses", make_generate_hypotheses),
         ("test_hypothesis", make_test_hypothesis),
         ("reconcile", make_reconcile),
         ("synthesize", make_synthesize),
+        ("visualize", make_visualize),
     ):
         _add_node(builder, name, factory(ctx))
 
     builder.add_edge(START, "intake")
     builder.add_edge("intake", "clarify_gate")
     builder.add_conditional_edges("clarify_gate", _after_clarify)
-    builder.add_edge("resolve_metrics", "plan")
-    builder.add_edge("plan", "author_sql")
+    # The model gets to look at the schema and resolve terms *before* it plans. Without this
+    # the system prompt told it to check the schema and gave it no way to.
+    builder.add_edge("resolve_metrics", "gather_context")
+    builder.add_edge("gather_context", "plan")
+    # Approved metrics first: anything the registry already answers is computed by naming
+    # it, so no free text reaches SQL for those figures. Whatever is left falls through to
+    # author_sql.
+    builder.add_edge("plan", "compute_metrics")
+    builder.add_conditional_edges("compute_metrics", _after_compute)
     builder.add_conditional_edges("author_sql", _after_author)
     builder.add_conditional_edges("execute", _after_execute)
 
     # The investigation loop. Note there is no `interpret -> synthesize` edge any more: every
     # path to an answer now goes through the materiality gate.
-    builder.add_edge("interpret", "materiality_check")
+    # Follow-up analysis on the frame that already exists, before deciding whether the
+    # finding needs explaining - a period-over-period view often settles that question.
+    builder.add_edge("interpret", "analyse")
+    builder.add_edge("analyse", "materiality_check")
     builder.add_conditional_edges("materiality_check", _after_materiality)
     builder.add_conditional_edges("generate_hypotheses", _after_hypotheses)
     builder.add_conditional_edges("test_hypothesis", _after_test)
     builder.add_conditional_edges("reconcile", _after_reconcile)
-    builder.add_edge("synthesize", END)
+    # The design document's flow ends synthesize -> visualize -> respond. The chart is built
+    # last because what is worth charting depends on what the conclusion turned out to be.
+    builder.add_edge("synthesize", "visualize")
+    builder.add_edge("visualize", END)
 
     return builder.compile(checkpointer=checkpointer if checkpointer is not None else get_checkpointer())
 
@@ -272,14 +322,15 @@ def resume_after_decision(run_id: uuid.UUID, graph: Any | None = None) -> dict[s
         )
 
     decided = [
-        a
-        for a in repo.get_trace(run_id)["approvals"]
-        if a["kind"] in approvals.QUERY_GATE_KINDS and a["status"] != "pending"
+        a for a in repo.get_trace(run_id)["approvals"] if a["status"] != "pending"
     ]
     if not decided:
-        raise ValueError(f"run {run_id} has no decided query approval to act on")
+        raise ValueError(f"run {run_id} has no decided approval to act on")
 
     latest = decided[-1]
+
+    if latest["kind"] == "budget_extension":
+        return _resume_after_budget_decision(run_id, run["thread_id"], latest, graph)
     graph = graph if graph is not None else build_graph()
     snapshot = graph.get_state(thread_config(run["thread_id"]))
     draft = (snapshot.values or {}).get("_draft") or {}
@@ -312,6 +363,42 @@ def resume_after_decision(run_id: uuid.UUID, graph: Any | None = None) -> dict[s
         log.info("resuming without approval", run_id=str(run_id), decision=latest["status"])
 
     return resume_run(run["thread_id"], updates=updates, graph=graph)
+
+
+def _resume_after_budget_decision(
+    run_id: uuid.UUID, thread_id: str, approval: dict[str, Any], graph: Any
+) -> dict[str, Any]:
+    """Carry on after a decision on approval point 3.
+
+    Granted: the ceilings are raised and the investigation continues from where it stopped.
+    Refused: the run answers with what it established and says it was cut short. Neither is an
+    error, and the refusal is the more common outcome by design - the point of asking is that the
+    answer can be no.
+    """
+    snapshot = graph.get_state(thread_config(thread_id))
+    budget = Budget.restore((snapshot.values or {}).get("budget") or {})
+
+    if approval["status"] == "approved":
+        budget.grant_extension()
+        log.info("budget extended", run_id=str(run_id), extensions=budget.extensions_granted)
+        updates: dict[str, Any] = {
+            "status": "investigating",
+            "budget": budget.to_state(),
+            "_pending_approval": None,
+        }
+    else:
+        reason = (
+            f"budget extension {approval['status']}"
+            + (f": {approval['decision_reason']}" if approval.get("decision_reason") else "")
+        )
+        log.info("budget extension refused", run_id=str(run_id), decision=approval["status"])
+        updates = {
+            "status": "investigating",
+            "truncation_reason": reason,
+            "_pending_approval": None,
+        }
+
+    return resume_run(thread_id, updates=updates, graph=graph)
 
 
 def drive(

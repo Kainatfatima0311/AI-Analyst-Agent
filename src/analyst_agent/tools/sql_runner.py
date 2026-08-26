@@ -64,6 +64,14 @@ class SqlRunnerInput(BaseModel):
             "too large."
         ),
     )
+    parameters: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "Values for %(name)s placeholders in the statement. Bound by the driver, never "
+            "interpolated - so a value cannot change the shape of the query. This is how "
+            "metric_query passes a date window or a filter."
+        ),
+    )
     approval_id: str | None = Field(
         default=None,
         description=(
@@ -110,6 +118,7 @@ conclude there is no data.
                 catalog=load_catalog(),
                 settings=settings,
                 row_limit=payload.row_limit,
+                parameters=payload.parameters,
             )
 
             # An escalated statement that a human has cleared is recorded as `approved`, not as
@@ -167,7 +176,9 @@ conclude there is no data.
             started = time.monotonic()
             try:
                 with conn.cursor() as cur:
-                    cur.execute(statement)
+                    # Parameters are bound by the driver. The guard has already validated the
+                    # statement *shape*, and a bound value cannot change it.
+                    cur.execute(statement, payload.parameters or None)
                     rows = cur.fetchall()
             except pg_errors.QueryCanceled:
                 elapsed = int((time.monotonic() - started) * 1000)

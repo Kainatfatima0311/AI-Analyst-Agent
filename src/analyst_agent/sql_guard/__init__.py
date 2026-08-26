@@ -49,6 +49,7 @@ def check(
     catalog: Catalog | None = None,
     settings: Settings | None = None,
     row_limit: int | None = None,
+    parameters: dict[str, Any] | None = None,
 ) -> GuardVerdict:
     """Validate a statement, and cost-gate it when a connection is available.
 
@@ -63,7 +64,7 @@ def check(
         return verdict
 
     target = verdict.rewritten_sql or sql
-    cost, reasons = gate(target, conn, settings)
+    cost, reasons = gate(target, conn, settings, parameters)
     if not reasons:
         return replace(verdict, estimated_cost=cost)
 

@@ -36,12 +36,20 @@ def _total_cost(plan: Any) -> float:
     raise ValueError("EXPLAIN output did not contain a Total Cost")
 
 
-def estimate_cost(sql: str, conn: psycopg.Connection[Any]) -> float:
-    """Return the planner's estimated total cost for an already-validated statement."""
+def estimate_cost(
+    sql: str, conn: psycopg.Connection[Any], parameters: dict[str, Any] | None = None
+) -> float:
+    """Return the planner's estimated total cost for an already-validated statement.
+
+    ``parameters`` must be passed for a statement carrying ``%(name)s`` placeholders. Postgres
+    will happily plan a parameterised statement, but only if the values are bound - without them
+    EXPLAIN fails on the literal ``%``, the gate reads that as "could not estimate", and every
+    parameterised query gets escalated to a human for no reason.
+    """
     with conn.cursor() as cur:
         # Interpolation is safe here and unavoidable: EXPLAIN takes a statement, not a
         # parameter, and this statement has already been parsed and allowed by the validator.
-        cur.execute(f"EXPLAIN (FORMAT JSON) {sql}")
+        cur.execute(f"EXPLAIN (FORMAT JSON) {sql}", parameters or None)
         row = cur.fetchone()
     if row is None:
         raise ValueError("EXPLAIN returned no rows")
@@ -51,7 +59,10 @@ def estimate_cost(sql: str, conn: psycopg.Connection[Any]) -> float:
 
 
 def gate(
-    sql: str, conn: psycopg.Connection[Any], settings: Settings | None = None
+    sql: str,
+    conn: psycopg.Connection[Any],
+    settings: Settings | None = None,
+    parameters: dict[str, Any] | None = None,
 ) -> tuple[float | None, list[Reason]]:
     """Estimate the cost and decide whether a human should see it first.
 
@@ -62,7 +73,7 @@ def gate(
     ceiling = settings.sql_max_explain_cost
 
     try:
-        cost = estimate_cost(sql, conn)
+        cost = estimate_cost(sql, conn, parameters)
     except (psycopg.Error, ValueError) as exc:
         log.warning("explain failed", error=str(exc), sql=sql)
         return None, [

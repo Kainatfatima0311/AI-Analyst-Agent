@@ -55,6 +55,8 @@ def merge_by_id[T: dict[str, Any]](key: str) -> Callable[[list[T] | None, list[T
         return merged
 
     return reduce
+
+
 TERMINAL_HYPOTHESIS_STATUSES: frozenset[str] = frozenset({"supported", "refuted", "inconclusive"})
 
 
@@ -81,7 +83,7 @@ class PlanStep(TypedDict, total=False):
 class QueryRecord(TypedDict, total=False):
     query_id: str
     purpose: str
-    verdict: Literal["allowed", "rejected", "escalated"]
+    verdict: Literal["allowed", "rejected", "escalated", "approved"]
     row_count: int
     truncated: bool
     reasons: list[str]
@@ -161,6 +163,8 @@ class AnalystState(TypedDict, total=False):
     _investigating_finding_id: str | None
     _hypothesis_queue: list[str]
     _pending_approval: dict[str, Any] | None
+    _context_notes: str | None
+    _analysis_notes: str | None
     _reconciliations: Annotated[list[dict[str, Any]], operator.add]
     _under_tested: Annotated[list[dict[str, Any]], operator.add]
     _draft: dict[str, Any] | None
@@ -194,12 +198,20 @@ def initial_state(
 # --- predicates the graph routes on ----------------------------------------
 
 
+EXECUTABLE_VERDICTS: frozenset[str] = frozenset({"allowed", "approved"})
+
+
 def executed_query_ids(state: AnalystState) -> list[str]:
-    """Queries that actually ran. Rejected and escalated ones are not evidence."""
+    """Queries that actually ran. Rejected and undecided-escalated ones are not evidence.
+
+    `approved` counts. It means the guard escalated the statement and a named human cleared it,
+    so it ran and its result is evidence like any other - leaving it out would quietly drop the
+    evidence for exactly the queries a reviewer looked at most closely.
+    """
     return [
         q["query_id"]
         for q in state.get("queries", [])
-        if q.get("verdict") == "allowed" and q.get("row_count") is not None
+        if q.get("verdict") in EXECUTABLE_VERDICTS and q.get("row_count") is not None
     ]
 
 

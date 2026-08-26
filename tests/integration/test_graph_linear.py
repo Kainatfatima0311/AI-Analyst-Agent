@@ -124,12 +124,19 @@ def test_a_question_runs_end_to_end(graph_for, rw_dsn: str, seeded: None) -> Non
             "intake",
             "clarify_gate",
             "resolve_metrics",
+            # The model gets to look at the schema before it plans, and to derive a further view
+            # and draw a chart afterwards. All three are tool-calling nodes.
+            "gather_context",
             "plan",
+            # Approved metrics are computed by name before any SQL is written.
+            "compute_metrics",
             "author_sql",
             "execute",
             "interpret",
+            "analyse",
             "materiality_check",
             "synthesize",
+            "visualize",
         ]
         assert trace["summary"]["queries_executed"] == 1
         assert trace["run"]["status"] == "completed"
@@ -220,10 +227,11 @@ def test_a_rejected_query_still_produces_an_answer_from_what_is_established(
         _cleanup(rw_dsn, dict(state))
 
 
-def test_a_spent_budget_produces_a_partial_answer_rather_than_an_error(
+def test_a_spent_budget_asks_for_more_before_giving_up(
     graph_for, rw_dsn: str, seeded: None
 ) -> None:
-    """Exhaustion routes to synthesis with the reason stated, not to an exception."""
+    """Approval point 3. The run parks and asks rather than truncating silently, because whether
+    an unfinished investigation deserves more budget is a person's call."""
     from analyst_agent.config import get_settings
 
     settings = get_settings().model_copy(update={"max_queries_per_run": 0})
@@ -232,17 +240,48 @@ def test_a_spent_budget_produces_a_partial_answer_rather_than_an_error(
 
     state = start_run("What was monthly revenue in 2018?", graph=graph)
     try:
-        assert state["status"] == "truncated"
-        assert state["truncation_reason"]
-        assert "budget" in state["truncation_reason"]
+        assert state["status"] == "awaiting_approval"
+        assert state["answer"] is None
 
-        trace = repo.get_trace(uuid.UUID(state["run_id"]))
-        assert trace["summary"]["queries_considered"] == 0
-        assert trace["run"]["status"] == "truncated"
-        # The answer still exists; it is honest about being partial rather than absent.
-        assert state["answer"]["conclusion"]
+        pending = repo.pending_approvals(uuid.UUID(state["run_id"]))
+        assert len(pending) == 1
+        assert pending[0]["kind"] == "budget_extension"
+        # The reviewer needs to see what the run has and has not established to decide.
+        assert "spent" in pending[0]["payload"]
+        assert "outstanding" in pending[0]["payload"]
     finally:
         _cleanup(rw_dsn, dict(state))
+
+
+def test_a_refused_budget_extension_produces_a_partial_answer(
+    graph_for, rw_dsn: str, seeded: None
+) -> None:
+    """Refusal is the expected answer here, and it still ends in an honest partial answer."""
+    from analyst_agent.agent.graph import resume_after_decision
+    from analyst_agent.config import get_settings
+
+    settings = get_settings().model_copy(update={"max_queries_per_run": 0})
+    graph = build_graph(llm=ScriptedLLM(script()), settings=settings)
+    state = start_run("What was monthly revenue in 2018?", graph=graph)
+    run_id = uuid.UUID(state["run_id"])
+
+    try:
+        approval_id = repo.pending_approvals(run_id)[0]["approval_id"]
+        repo.decide_approval(
+            approval_id, "rejected", decided_by="reviewer@example.com",
+            decision_reason="not worth more spend for this question",
+        )
+
+        resumed = resume_after_decision(
+            run_id, graph=build_graph(llm=ScriptedLLM(script()), settings=settings)
+        )
+        assert resumed["status"] == "truncated"
+        assert "extension rejected" in resumed["truncation_reason"]
+        # The answer exists and is honest about being partial rather than absent.
+        assert resumed["answer"]["conclusion"]
+        assert repo.get_trace(run_id)["summary"]["queries_considered"] == 0
+    finally:
+        _cleanup(rw_dsn, {"run_id": str(run_id)})
 
 
 def test_a_parked_run_resumes_from_its_checkpoint_after_the_graph_is_rebuilt(
@@ -282,7 +321,7 @@ def test_a_parked_run_resumes_from_its_checkpoint_after_the_graph_is_rebuilt(
         # Intake and clarify_gate ran once, before the pause; the resumed half continues from
         # there rather than starting over.
         assert nodes.count("intake") == 1
-        assert nodes[-1] == "synthesize"
+        assert nodes[-1] == "visualize", "the chart is built last, after the conclusion"
         assert trace["summary"]["queries_executed"] == 1
     finally:
         _cleanup(rw_dsn, {"run_id": str(run_id)})

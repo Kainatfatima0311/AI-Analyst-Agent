@@ -14,6 +14,7 @@ from analyst_agent.observability.logging import get_logger
 from analyst_agent.tools.base import Tool, ToolResult
 from analyst_agent.tools.chart_builder import ChartBuilderTool
 from analyst_agent.tools.metric_lookup import MetricLookupTool
+from analyst_agent.tools.metric_query import MetricQueryTool
 from analyst_agent.tools.python_analysis import PythonAnalysisTool
 from analyst_agent.tools.schema_inspector import SchemaInspectorTool
 from analyst_agent.tools.sql_runner import SqlRunnerTool
@@ -25,6 +26,7 @@ TOOL_CLASSES: tuple[type[Tool[Any]], ...] = (
     MetricLookupTool,
     SchemaInspectorTool,
     SqlRunnerTool,
+    MetricQueryTool,
     PythonAnalysisTool,
     ChartBuilderTool,
 )

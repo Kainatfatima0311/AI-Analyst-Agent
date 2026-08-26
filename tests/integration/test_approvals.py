@@ -209,7 +209,7 @@ def test_the_wait_survives_a_restart(parked: dict[str, Any]) -> None:
     assert resumed["status"] == "completed"
     nodes = [s["node"] for s in repo.get_trace(run_id)["steps"]]
     assert nodes.count("intake") == 1, "it resumed rather than starting over"
-    assert nodes[-1] == "synthesize"
+    assert nodes[-1] == "visualize"
 
 
 def test_a_timed_out_approval_is_recorded_as_a_decision(

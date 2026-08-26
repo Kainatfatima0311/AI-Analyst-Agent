@@ -26,7 +26,7 @@ from analyst_agent.agent.nodes.schemas import (
     Synthesis,
 )
 from analyst_agent.agent.prompts import question_message, stable_system_prompt
-from analyst_agent.agent.state import AnalystState, executed_query_ids
+from analyst_agent.agent.state import AnalystState, executed_query_ids, tested_hypotheses
 from analyst_agent.config import Settings, get_settings
 from analyst_agent.db import repository as repo
 from analyst_agent.metrics.registry import NotApproved, get_registry
@@ -274,6 +274,37 @@ def make_author_sql(ctx: NodeContext) -> Node:
         exhausted = budget.exhausted()
         if exhausted or budget.would_exceed_queries():
             reason = exhausted or "query budget would be exceeded by another query"
+
+            # Approval point 3. Rather than truncating silently, ask once - a human is better
+            # placed than the agent to judge whether an unfinished investigation is worth more
+            # budget. Asked only once per run: repeating the request every time the ceiling is
+            # hit would turn a gate into nagging.
+            if not state.get("_pending_approval") and budget.extensions_granted == 0:
+                outstanding = [
+                    f["statement"]
+                    for f in state.get("findings", [])
+                    if f.get("material")
+                    and len(tested_hypotheses(state, f["finding_id"])) < 2
+                ]
+                approval_id = approvals.request_budget_extension(
+                    run_id,
+                    reason=reason,
+                    established=[f["statement"] for f in state.get("findings", [])],
+                    outstanding=outstanding,
+                    spent=budget.to_state(),
+                    settings=ctx.settings,
+                )
+                repo.set_run_status(run_id, "awaiting_approval")
+                log.info("asking for more budget", run_id=str(run_id), reason=reason)
+                return {
+                    "status": "awaiting_approval",
+                    "budget": budget.to_state(),
+                    "_pending_approval": {
+                        "approval_id": str(approval_id),
+                        "kind": "budget_extension",
+                    },
+                }
+
             log.info("stopping before authoring", reason=reason)
             return {"truncation_reason": reason, "budget": budget.to_state()}
 
