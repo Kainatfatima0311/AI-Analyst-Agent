@@ -36,6 +36,13 @@ EXAMPLES: list[tuple[str, str]] = [
     ("◔", "Why did revenue drop in March 2018?"),
     ("◈", "Which product categories drove the most revenue?"),
     ("⌁", "How is on-time delivery trending by seller state?"),
+    # A second page behind the arrow. The last two are here on purpose: one has no approved
+    # definition and one cannot be answered from this data, so the starting questions include
+    # cases where the right move is to stop and say so.
+    ("◑", "What is the average order value by customer state?"),
+    ("◍", "Which sellers concentrate the most revenue?"),
+    ("◇", "What is our customer churn rate?"),
+    ("◎", "How did the marketing spend affect sales?"),
 ]
 
 CONTEXTS = [
@@ -188,21 +195,46 @@ def ask_card() -> None:
                 st.error(f"The API refused this: {exc.detail}")
 
 
+VISIBLE_SUGGESTIONS = 4
+
+
 def suggestions() -> None:
+    """Four at a time, with an arrow through the rest.
+
+    A click stages the text rather than writing it: ``question`` is a widget's own state key, and
+    Streamlit refuses a write to one after the widget exists in the same run.
+    """
     ui.section("Try these popular questions")
-    columns = st.columns(len(EXAMPLES))
-    for column, (glyph, example) in zip(columns, EXAMPLES, strict=True):
+    page = st.session_state.get("suggest_page", 0)
+    pages = max(1, -(-len(EXAMPLES) // VISIBLE_SUGGESTIONS))
+    page %= pages
+    start = page * VISIBLE_SUGGESTIONS
+    shown = EXAMPLES[start : start + VISIBLE_SUGGESTIONS]
+
+    columns = st.columns([*([1] * VISIBLE_SUGGESTIONS), 0.16])
+    for column, (glyph, example) in zip(columns, shown, strict=False):
         with column:
             if st.button(f"{glyph}   {example}", key=f"eg-{example}", width="stretch"):
                 st.session_state["pending_question"] = example
                 st.rerun()
+    with columns[-1]:
+        # A chevron, not a greater-than: it is typography for "more this way".
+        if pages > 1 and st.button("›", key="suggest-next", help="More questions"):  # noqa: RUF001
+            st.session_state["suggest_page"] = page + 1
+            st.rerun()
 
 
 def recent_strip() -> None:
     runs = recent_runs(limit=4)
     if not runs:
         return
-    ui.section("Recent Analyses")
+    head, link = st.columns([5, 0.9])
+    with head:
+        ui.section("Recent Analyses")
+    with link:
+        if st.button("View all ›", key="view-all", width="stretch"):  # noqa: RUF001
+            st.session_state["page"] = "saved"
+            st.rerun()
     columns = st.columns(len(runs))
     current = st.session_state.get("run_id")
     for column, run in zip(columns, runs, strict=True):
@@ -227,7 +259,13 @@ def ask_page(who: str) -> None:
     suggestions()
     recent_strip()
 
+    # The result block is part of the page, not a mode it switches into: with no run selected it
+    # shows the latest one. An analyst arriving at this page is usually coming back to the answer
+    # they just asked for, and an empty page below the box would make them hunt for it.
     run_id = st.session_state.get("run_id")
+    if not run_id:
+        latest = recent_runs(limit=1)
+        run_id = latest[0]["run_id"] if latest else None
     if run_id:
         st.markdown("")
         result_card(run_id, who)

@@ -489,6 +489,18 @@ def test_an_unparseable_timestamp_still_shows_something() -> None:
 # page rendered, and then clicking a suggestion card raised. Rendering a page is not using it.
 
 
+def _click_key(test: Any, key: str) -> Any:
+    """Click by widget key, and re-run.
+
+    Used where the label is a glyph: matching on a chevron would put a non-ASCII character in the
+    test for no benefit, and the key is the stable identity anyway.
+    """
+    for button in test.button:
+        if str(button.key or "") == key:
+            return button.click().run()
+    raise AssertionError(f"no button with key {key!r}")
+
+
 def _click(test: Any, contains: str) -> Any:
     """Click the first button whose label contains this text, and re-run."""
     for button in test.button:
@@ -557,3 +569,60 @@ def test_sending_an_empty_question_warns_instead_of_starting_a_run(app) -> None:
     assert not test.exception
     assert "run_id" not in test.session_state
     assert any("question" in w.value.lower() for w in test.warning)
+
+# --- the starting questions, and the block below them --------------------------
+
+
+def test_the_result_block_is_present_without_selecting_a_run(app) -> None:
+    """It is part of the page, not a mode the page switches into.
+
+    An analyst arriving here is usually coming back to the answer they just asked for, so with
+    nothing selected the latest run is shown rather than an empty space below the box.
+    """
+    test = app().run()
+    assert "run_id" not in test.session_state
+    page = " ".join(m.value for m in test.markdown)
+    assert "Key Takeaways" in page
+    assert "Evidence &amp; Queries" in page
+
+
+def test_only_four_starting_questions_show_at_once(app) -> None:
+    """Counted by widget key: the nav shares some glyphs and a recent card shares a question."""
+    test = app().run()
+    offered = [b for b in test.button if str(b.key or "").startswith("eg-")]
+    assert len(offered) == 4
+
+
+def test_the_arrow_pages_through_the_rest(app) -> None:
+    test = app().run()
+    first = {b.label for b in test.button}
+    test = _click_key(test, "suggest-next")
+    assert not test.exception
+    second = {b.label for b in test.button}
+    assert first != second, "the arrow has to change what is offered"
+    assert "average order value" in " ".join(second).lower()
+
+
+def test_the_arrow_wraps_rather_than_running_out(app) -> None:
+    """Two pages, so a second press returns to the first — never a blank row."""
+    test = app().run()
+    test = _click_key(test, "suggest-next")
+    test = _click_key(test, "suggest-next")
+    assert not test.exception
+    labels = " ".join(b.label for b in test.button)
+    assert "monthly revenue in 2018" in labels
+
+
+def test_a_question_from_the_second_page_still_fills_the_box(app) -> None:
+    test = app().run()
+    test = _click_key(test, "suggest-next")
+    test = _click(test, "customer churn rate")
+    assert not test.exception
+    assert test.session_state["question"] == "What is our customer churn rate?"
+
+
+def test_view_all_goes_to_the_saved_page(app) -> None:
+    test = app().run()
+    test = _click(test, "View all")
+    assert not test.exception
+    assert test.session_state["page"] == "saved"
