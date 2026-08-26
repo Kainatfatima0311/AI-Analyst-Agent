@@ -54,6 +54,12 @@ under our control.
   grader verdicts. Tools declared with `strict: true`. No assistant prefill (400 on Opus 5).
 - `stop_reason == "refusal"` is handled explicitly; server-side fallbacks enabled.
 
+> **This is the plan as written before implementation, and it is left that way on purpose.**
+> Two things in it were superseded during the work — Streamlit as the interface, and "five tools"
+> where there are now six — and both divergences are recorded in §9 and in
+> [progress.md](progress.md) rather than edited out here. A plan rewritten to look prescient is
+> not a record of anything.
+
 ## 3. Architecture
 
 ```
@@ -477,3 +483,32 @@ is green, the eval report exists with real measured numbers, and the final repor
   never depend on a network download.
 - The exact `explain_gate` cost threshold and the default `LIMIT` are tuned in Step 12 against
   real eval runs.
+
+---
+
+## 9. Beyond the original plan
+
+The fourteen steps above were the plan as written before implementation, and they were executed as
+written. Five further steps followed, each recorded in [progress.md](progress.md) with what it
+found:
+
+| Step | What it added | Why it was not in the original plan |
+|---:|---|---|
+| 15 | **Design-conformance pass** — four gaps closed | It is a *check* on the plan rather than a step of it: the implementation was read back against `docs/design-document.md` and four places had quietly settled for less than the document promised |
+| 16 | **Groq backend**, result rows reaching synthesis, a hand-written frontend replacing Streamlit | No Anthropic credit was available; the first live run then exposed a real defect; and the supplied UI design could not be reproduced on a widget toolkit |
+| 17 | **Phase 2** — dashboards, saved reports, PDF/Excel/PNG exports, a decomposable confidence score | Requested after v1.0: turn an analyst tool into a product |
+| 18 | **Phase 3** — organisations, teams, encrypted data sources, share links, monitoring alerts, an audit trail | Requested after v1.0: serve more than one company |
+| 19 | **The answer as an eight-section BI report** | Requested after v1.0: the output should read as an analyst's report rather than a chat reply |
+
+Two things about that list are worth saying plainly.
+
+**The plan held.** Nothing in steps 0–14 was abandoned or reversed. Streamlit was replaced, which
+was a *decision* recorded in this plan rather than a requirement of the brief — the brief asked for
+an "analyst interface" and named no technology.
+
+**Every phase after v1.0 found a real bug in the phase before it**, and each is written up rather
+than quietly fixed: a saved report landing in the wrong organisation, an alert query with no run to
+trace it to, monthly figures reconstructed from prose because the values never reached synthesis,
+and an audit trail that could not reproduce a parameterised query. Those are the entries in
+`progress.md` worth reading, because they are where the design was wrong rather than merely
+incomplete.

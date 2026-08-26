@@ -223,7 +223,7 @@ between parking and resuming, which is what a process restart amounts to.
 
 ## 4. Security
 
-Ten controls, layered so no single failure is sufficient. Full threat mapping in
+Fourteen controls, layered so no single failure is sufficient. The first ten cover what the agent may do to the warehouse; C11-C14, added with multi-tenancy, cover who may see the result — see §10.4 and [security-model.md](security-model.md). Full threat mapping in
 [security-controls.md](security-controls.md).
 
 | Control | Verified by |
@@ -237,7 +237,11 @@ Ten controls, layered so no single failure is sufficient. Full threat mapping in
 | C7 budget caps | a spent budget produces a truncated answer, not an exception |
 | C8 approval gates | 13 tests, including approval surviving a restart |
 | C9 secret handling | nested dicts and exception text both scrubbed |
-| C10 audit trail | rejected queries recorded, not only executed ones |
+| C10 audit trail | rejected queries recorded, not only executed ones, with the values bound to each statement |
+| C11 tenant isolation | two organisations, checked from both directions across every scoped resource |
+| C12 credentials encrypted at rest | the plaintext is absent from the column; a tampered ciphertext fails to decrypt |
+| C13 bearer secrets hashed | a token never appears in any listing; removing a member revokes their keys |
+| C14 append-only audit | no update or delete function exists; a credential never reaches the trail |
 
 Two properties are worth stating plainly:
 
@@ -451,3 +455,109 @@ inputs, and unused. Anyone continuing this work should set `ANTHROPIC_API_KEY`, 
 `python -m evals.runner --all`, and treat the resulting report as the first real result — while
 noting that the safety half of that report should read zero, and that a number other than zero is
 the only outcome here that would invalidate the rest.
+
+---
+
+## 10. What was built after v1.0
+
+The report above describes the system at `v1.0`: an agent that answers a business question safely
+and traceably. Four further phases followed, each with its own entry in
+[../progress.md](../progress.md). They are summarised here because a reader who stops at §9 would
+otherwise be reading a description of a system that no longer matches the repository.
+
+### 10.1 A second model provider, and a bug it exposed
+
+`agent/llm_groq.py` adds a Groq backend as a subclass of the same `LLM` wrapper, so nothing in
+`nodes/`, `graph.py` or `tool_loop.py` changed. Four provider differences only surfaced against the
+live API — a double-prefixed base URL, an output cap counted against the per-minute allowance
+*before* generating, a stricter structured-output schema, and server-side tool validation that
+failed the whole request where this project wants a refusal *in the tool result*.
+
+The first live run then found something more important. A question ran end to end and produced two
+tested hypotheses, one of them refuted — and **ten of twelve monthly figures in the conclusion were
+wrong**. Not a model quirk: `_history` gave every node after `interpret` only `"12 rows"`, so the
+actual values never reached synthesis and the model reconstructed them from its own earlier prose.
+That is precisely the failure this project exists to prevent, and no prompt could have fixed it
+because the numbers were genuinely absent from the context. Results now travel into the context,
+bounded on three axes, with **every cut stated in the text** — a silently truncated table invites
+the same invention in a smaller costume.
+
+### 10.2 The interface
+
+Streamlit was replaced by a hand-written HTML/CSS/JS page served by the API itself at `/app/`. The
+reason is general enough to be worth recording: **a widget toolkit owns its own markup**, so
+reproducing a specified design on top of it means layering CSS over someone else's structure. Three
+rounds went that way before the layer was replaced rather than patched again.
+
+Same origin is the substantive part rather than packaging convenience — the interface has no way to
+reach anything except the `/v1` endpoints, so "the UI never touches the database" became a property
+of the deployment instead of a promise in a document. Charts are drawn as inline SVG from the stored
+Plotly spec, and the page **never picks a colour for data**: the series colours arrive from the
+validated palette on the server.
+
+### 10.3 The product layer
+
+Dashboards, saved reports, exports and a confidence score. Two decisions carry the weight:
+
+- **A report is a snapshot, not a pointer.** Rendering live on every read would mean a saved report
+  silently changes when a definition is revised, so somebody re-opening a March report in June would
+  read different figures under the same name with nothing to tell them.
+- **The confidence score is decomposable.** Five weighted components over *applicable* ones only —
+  a factual question has no hypotheses to test, and scoring it as a failure would be wrong. Two
+  ceilings sit above the arithmetic, both statements about the investigation rather than the sum:
+  thin evidence caps the score below the high band, and the agent's own stated band is a **ceiling,
+  never a floor**.
+
+The tests forced both ceilings: the first version gave a one-query answer 79% for having nothing
+wrong with it, and a zero-query answer 27% because "nothing left unresolved" is vacuously true when
+nothing was attempted.
+
+**What the score does not measure**, stated because it matters: the *shape* of the investigation,
+not whether the prose recites the numbers correctly. The run in §10.1 scores 100% on that basis
+while its conclusion misquoted ten figures.
+
+### 10.4 The enterprise layer
+
+Organisations, teams, encrypted data sources, share links with expiry, monitoring alerts over
+approved metrics, and an append-only audit trail. The full treatment is
+[security-model.md](security-model.md); three points belong here.
+
+**The tenant filter is in the SQL, not the route.** A route can be added by somebody who has not
+read the rule; a query filtering by `organization_id` cannot return another tenant's row whoever
+calls it. Another organisation's resource answers **404, not 403** — a 403 confirms it exists, and a
+sequence of those is an enumeration of another company's work.
+
+**Two techniques for two kinds of secret.** Data source configuration is *encrypted*, because it
+must be recovered to open a connection; API keys and share tokens are *hashed*, because nothing
+needs to read them back — and storing them recoverably would let an operator with a database dump
+act as a customer.
+
+**Three real bugs the isolation tests caught**, including a saved report landing in the default
+organisation rather than the caller's: invisible to the person who saved it and visible to a tenant
+with nothing to do with it. That is why those tests create two organisations and check both
+directions.
+
+### 10.5 The output
+
+The answer is now an eight-section report rather than a paragraph: executive summary, key findings
+as cards, the investigation process, hypothesis testing, charts, evidence with the SQL *and its
+rows* one click away, confidence with its factors, and recommended actions.
+
+Four of those sections needed data the agent did not emit, so the **output contract** was extended
+and the investigation logic was not touched. The rule that keeps the page honest: judgements come
+from the model and are filtered against the queries that actually ran, while the record — process,
+evidence, confidence factors — is derived from the trace. Asking a model to describe its own process
+produces a fluent paragraph; reading the trail produces the truth.
+
+Building it found a gap in the project's central claim. Rebuilding a `metric_query` result failed at
+its own `%(date_from)s` placeholder, because the audit trail stored the statement but **not the
+values bound to it**. "Traceable to its queries" is hollow if a reviewer cannot re-run the query a
+figure came from, and the parameterised path is the one the metrics layer pushes work through.
+Migration 006 records them.
+
+### 10.6 Where that leaves the assessment in §9
+
+Unchanged in the one respect that matters. Everything above is verified by 670 tests against a
+scripted model, a real database and real files. The **scored evaluation run against a live model
+still does not exist** — one question ran end to end, and the suite validates in full, but the
+numbers §6 asks for remain the single thing this project has not measured.

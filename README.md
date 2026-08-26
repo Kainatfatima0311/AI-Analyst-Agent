@@ -223,11 +223,19 @@ for a human, so holding the connection open would both time out and make approva
 - [plan.md](plan.md) · [progress.md](progress.md) — the plan, and what each step actually did
 - [docs/design-document.md](docs/design-document.md) — goal, tools, state, approval points,
   failure handling, security limits
-- [docs/security-controls.md](docs/security-controls.md) — ten controls, each mapped to the
+- [docs/architecture.md](docs/architecture.md) — component boundaries, the runtime flow of one
+  question, the data model
+- [docs/security-controls.md](docs/security-controls.md) — fourteen controls, each mapped to the
   threat it answers
+- [docs/security-model.md](docs/security-model.md) — tenancy, identity, secrets, sharing, the
+  audit trail, and a section on what this model does *not* do
+- [docs/deployment.md](docs/deployment.md) — three ways to run it, and the five things that are
+  not optional before serving more than one company
 - [docs/metrics-catalog.md](docs/metrics-catalog.md) — the approved definitions (generated)
 - [docs/final-technical-report.md](docs/final-technical-report.md) — tradeoffs, evaluation
-  results, limitations, what production would still need
+  results, limitations, what production would still need, and what was built after `v1.0`
+- [PROJECT-DOCUMENTATION.md](PROJECT-DOCUMENTATION.md) — the whole project in one file: problem,
+  design, implementation, security, evaluation, results, limitations
 
 ## Evaluation
 
@@ -245,7 +253,7 @@ python -m evals.runner --all
 
 ## Security
 
-Ten controls, layered so no single failure is sufficient — read-only role, AST validation, object
+Fourteen controls, layered so no single failure is sufficient — read-only role, AST validation, object
 allowlist, sensitive-column policy, resource limits, prompt-injection containment, budget caps,
 four human-approval gates, secret handling, and a full audit trail. Each one, the threat it
 answers, and what remains residual is in [docs/security-controls.md](docs/security-controls.md).

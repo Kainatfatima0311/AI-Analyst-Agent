@@ -7,8 +7,8 @@
 | **Project** | An autonomous agent that answers business questions from a data warehouse, writes SQL that is validated before it runs, tests more than one explanation for what it finds, and returns a conclusion traceable to the exact queries behind it |
 | **Repository** | `https://github.com/Kainatfatima0311/AI-Analyst-Agent` |
 | **Language / runtime** | Python 3.12+ (developed on 3.13.5) |
-| **Core stack** | FastAPI · LangGraph · Anthropic Claude (`claude-opus-5`) or Groq · PostgreSQL 17 · sqlglot · pandas · Plotly · a hand-written HTML/CSS/JS interface served by the API |
-| **Size** | 53 source modules · 25 test modules · **596 tests passing** |
+| **Core stack** | FastAPI · LangGraph · Anthropic Claude (`claude-opus-5`) or Groq · PostgreSQL 17 · sqlglot · pandas · Plotly · reportlab / openpyxl · Fernet · a hand-written HTML/CSS/JS interface served by the API |
+| **Size** | 59 source modules · 27 test modules · **670 tests passing** |
 | **Static analysis** | `ruff` clean · `mypy --strict` clean |
 | **Document date** | 26 August 2026 |
 
@@ -43,6 +43,8 @@
 25. [How to run the project](#25-how-to-run-the-project)
 26. [Appendices](#26-appendices)
 27. [Phase 2: dashboards, reports, exports and a confidence score](#27-phase-2-dashboards-reports-exports-and-a-confidence-score)
+28. [Phase 3: organisations, data sources, sharing, alerts and audit](#28-phase-3-organisations-data-sources-sharing-alerts-and-audit)
+29. [The answer as a report](#29-the-answer-as-a-report)
 
 ---
 
@@ -76,7 +78,9 @@ structurally rather than by instruction:
 The system was built in fifteen documented steps, each with its own tests and its own commit. It
 ships with a Dockerised stack that starts with one command, a 79-case hostile-query corpus as a
 security regression net, a 32-question evaluation suite in which seven questions must *not* be
-answered at all, and a CI pipeline. 473 automated tests pass.
+answered at all, and a CI pipeline. **670 automated tests pass.**
+
+It has since grown three further phases, each documented in its own section: a product layer (dashboards, saved reports, exports, a decomposable confidence score — §27), an enterprise layer (organisations, teams, encrypted data sources, share links, monitoring alerts, an append-only audit trail — §28), and a presentation layer that turns the answer into an eight-section business intelligence report rather than a chat reply (§29).
 
 One limitation is stated up front because it shapes how every result in this document should be
 read: **no agent behaviour has been executed against a live language model.** An API key with
@@ -414,11 +418,17 @@ Owned and written only by `app_rw`. The agent's SQL tool is never handed this co
 | `runs` | one row per question | `run_id`, `thread_id`, `question`, `status`, `requested_by`, timings, token and cost totals |
 | `run_steps` | one row per node execution | `run_id`, `step_id`, `node`, `status`, `started_at`, `duration_ms`, `summary`, `error` |
 | `tool_calls` | one row per tool invocation | `run_id`, `step_id`, `tool`, `arguments`, `result_summary`, `error`, `duration_ms` |
-| `sql_audit` | one row per query **considered** — allowed, rejected, escalated or approved | `query_id`, `run_id`, `sql`, `rewritten_sql`, `purpose`, `verdict`, `reasons`, `referenced_objects`, `sensitive_columns`, `estimated_cost`, `row_count`, `truncated`, `duration_ms` |
+| `sql_audit` | one row per query **considered** — allowed, rejected, escalated or approved, with the values bound to it so a parameterised statement can be reproduced | `query_id`, `run_id`, `sql`, `rewritten_sql`, `purpose`, `verdict`, `reasons`, `referenced_objects`, `sensitive_columns`, `estimated_cost`, `row_count`, `truncated`, `duration_ms` |
 | `approvals` | one row per approval request | `approval_id`, `run_id`, `kind`, `payload`, `status`, `requested_at`, `decided_at`, `decided_by`, `reason` |
 | `findings` | findings and their materiality | `finding_id`, `run_id`, `statement`, `material`, `evidence_query_ids` |
 | `hypotheses` | competing explanations and their outcomes | `hypothesis_id`, `finding_id`, `statement`, `status`, `test_query_ids`, `reasoning` |
 | `charts` | generated figures | `chart_id`, `query_id`, `title`, `chart_type`, `spec` |
+| `organizations` · `users` · `organization_members` | tenants, people, and the role between them | `organization_id`, `user_id`, `role` |
+| `api_keys` | how a caller proves which organisation it is | `key_hash` (SHA-256 only), `prefix`, `revoked_at` |
+| `data_sources` | postgres / csv / excel, per organisation | `connection_config` (Fernet ciphertext), `summary` (redacted) |
+| `report_shares` | a share is a capability with a lifetime | `token_hash`, `audience`, `expires_at`, `revoked_at`, `use_count` |
+| `alerts` · `alert_events` | a threshold is configuration; a breach is history | `metric`, `comparison`, `threshold`, `status` / `triggered`, `observed`, `baseline` |
+| `audit_log` | append-only: who did what, in which organisation | `actor_label`, `action`, `target_id`, `detail` |
 | `reports` | a saved analysis, frozen as it read when it was saved | `report_id`, `run_id`, `name`, `created_by`, `created_at`, `updated_at`, `snapshot` |
 | LangGraph checkpoint tables | durable graph state | managed by `PostgresSaver` |
 
@@ -781,7 +791,7 @@ Two reducer decisions matter more than they look:
 Every node is a **closure over an LLM and a tool registry** (`make_gather_context(ctx)` and so
 on). This is not a testing nicety: the routing is where the policy lives, and routing must be
 asserted deterministically rather than through whatever a model happens to say on the day. It is
-the reason 473 tests pass with no API key.
+the reason 670 tests pass with no API key.
 
 ### 11.4 The bounded tool loop
 
@@ -1000,6 +1010,15 @@ limiting on question submission.
 | `GET` · `PATCH` · `DELETE /v1/reports/{id}` | read one, rename it, delete it |
 | `GET /v1/reports/{id}/export.pdf` · `.xlsx` | the report as a file, evidence included |
 | `GET /v1/charts/{id}/export.png` | one chart, as rendered when it was built |
+| `GET /v1/runs/{id}/queries/{qid}/rows` | the rows behind one query, rebuilt from the recorded statement |
+| `GET /v1/me` · `POST /v1/organizations` | who the caller is; create an organisation |
+| `GET /v1/team` · `POST /v1/team/invite` · `PATCH /v1/team/member/{id}` | the team, and managing it |
+| `GET` · `POST` · `DELETE /v1/team/keys[/{id}]` | issue and revoke API keys |
+| `GET` · `POST` · `DELETE /v1/data-sources[/{id}]` | data sources; credentials never returned |
+| `POST /v1/reports/{id}/shares` · `GET /v1/shared/{token}` | share links, with expiry |
+| `PATCH /v1/reports/{id}/visibility` | private / team / public |
+| `GET` · `POST` · `PATCH` · `DELETE /v1/alerts[/{id}]` · `POST /v1/alerts/{id}/check` | monitoring alerts |
+| `GET /v1/audit` | the append-only audit trail |
 | `GET /healthz` · `GET /readyz` | liveness; readiness including the read-only check |
 
 `202` rather than `200` on a question is deliberate: an investigation takes minutes and can pause
@@ -1061,7 +1080,7 @@ PNG and the screen. A test asserts the page requests nothing from a third party.
 
 ### 18.1 Composition
 
-**596 tests** across 25 modules.
+**670 tests** across 27 modules.
 
 | Suite | Focus |
 |---|---|
@@ -1225,7 +1244,7 @@ milestones.
 
 | | |
 |---|---|
-| Tests | **473 passing** — 53 source modules, `ruff` and `mypy` clean |
+| Tests | **670 passing** — 59 source modules, `ruff` and `mypy` clean |
 | Hostile queries rejected | **79 / 79**, with no database required to prove it |
 | Read-only role assertions | **29 / 29**, and they pass inside the container |
 | Approved metrics | **12**, each executing and each passing the guard |
@@ -1247,7 +1266,7 @@ The two halves of the project fail differently, and conflating them would misrep
 
 | | Verified | Not verified |
 |---|---|---|
-| **This repository's behaviour** — routing, policy edges, approval flow, budget caps, recovery, guard decisions, metric rendering, graders | ✅ 473 tests | — |
+| **This repository's behaviour** — routing, policy edges, approval flow, budget caps, recovery, guard decisions, metric rendering, tenant isolation, encryption, exports, graders | ✅ 670 tests | — |
 | **The model's analytical quality** — does it write correct SQL, generate genuinely distinct hypotheses, calibrate confidence, decline appropriately | — | ❌ requires a live key |
 
 A routing bug is a bug in this repository. A weak hypothesis is a property of the model and the
@@ -1443,8 +1462,8 @@ In the order the concerns would actually matter, not in order of interest:
 Copy-Item .env.example .env      # fill in ANTHROPIC_API_KEY and the two database passwords
 docker compose up                # database, dataset, API, interface
 
+# UI  -> http://localhost:8000/app/
 # API -> http://localhost:8000/docs
-# UI  -> http://localhost:8501
 ```
 
 A clean clone plus `docker compose up` is the whole setup. Nothing depends on a developer's
@@ -1465,8 +1484,7 @@ python scripts/migrate.py        # agent state tables
 python scripts/seed_db.py        # dataset (local CSVs -> Kaggle -> synthetic)
 python scripts/smoke.py          # prove analyst_ro cannot write
 
-make api                         # http://localhost:8000/docs
-make ui                          # http://localhost:8501
+make api                         # UI at /app/, API docs at /docs
 ```
 
 ### 25.3 Commands
@@ -1511,7 +1529,10 @@ AI-Analyst-Agent/
 ├── docs/
 │   ├── design-document.md           written before any code
 │   ├── architecture.md              component boundaries, runtime flow, data model
-│   ├── security-controls.md         ten controls, each mapped to its threat
+│   ├── security-controls.md         fourteen controls, each mapped to its threat
+│   ├── security-model.md            tenancy, identity, secrets, sharing, audit — and §9, what
+│   │                                this model does *not* do
+│   ├── deployment.md                three modes, and the five things that are not optional
 │   ├── metrics-catalog.md           generated from the YAML definitions
 │   └── final-technical-report.md    decisions, costs, results, limitations
 ├── src/analyst_agent/
@@ -1533,10 +1554,14 @@ AI-Analyst-Agent/
 │   ├── metrics/                     registry.py · loader.py · definitions/*.yaml (12)
 │   ├── db/                          engine.py · repository.py · models.py
 │   ├── observability/               logging.py · trace.py · audit.py
+│   ├── security/                    principal.py · crypto.py (tenancy and secrets)
+│   ├── alerts/                      detect.py (anomaly detection over approved metrics)
+│   ├── reports/                     snapshot.py · export.py (PDF and Excel)
 │   └── api/static/                  index.html · app.css · app.js (the interface)
 ├── db/
 │   ├── init/sql/                    01_roles.sql · 02_schema.sql · 03_grants.sql
 │   ├── migrations/                  001_agent_state · 002_inconclusive · 003_approved_verdict
+│   │                                004_saved_reports · 005_organizations · 006_audit_parameters
 │   └── seed/                        download.py · load.py · raw/
 ├── evals/
 │   ├── questions/                   01_factual … 06_adversarial (32 questions)
@@ -1569,7 +1594,11 @@ AI-Analyst-Agent/
 | `EFFORT_CLASSIFY` | `low` | classification nodes |
 | `EFFORT_AUTHOR` | `high` | SQL authoring, interpretation |
 | `EFFORT_REASON` | `xhigh` | hypothesis generation, synthesis |
-| `API_PORT` · `UI_PORT` | 8000 · 8501 | published ports |
+| `SECRETS_KEY` | — | **required** to register a data source; Fernet key, held outside the database |
+| `REQUIRE_AUTHENTICATION` | `false` | **set to `true` in production**: removes the anonymous path entirely |
+| `LLM_PROVIDER` | `anthropic` | or `groq` |
+| `GROQ_MAX_TOKENS` | 4096 | counts against the per-minute allowance *before* generating |
+| `API_PORT` | 8000 | the interface is served on the same port at `/app/` |
 
 ### Appendix C — Requirement traceability
 
@@ -1578,7 +1607,7 @@ The brief's nine common standards, each mapped to where it is met:
 | # | Standard | Where |
 |---|---|---|
 | 1 | A design document written **before** coding | `docs/design-document.md`, committed in Step 1 before any agent code |
-| 2 | Git repository with README, tests and CI | 17 commits, one per step; `README.md`; 473 tests; `.github/workflows/ci.yml` |
+| 2 | Git repository with README, tests and CI | one commit per step; `README.md`; 670 tests; `.github/workflows/ci.yml` |
 | 3 | Dockerised setup | `Dockerfile` (multi-stage, non-root) + `docker-compose.yml`, verified on a clean clone |
 | 4 | Structured logging, agent traces, tool-call history | `observability/logging.py`; `run_steps`, `tool_calls`, `sql_audit`; `GET /trace` |
 | 5 | Persistent task state with recovery | `PostgresSaver` checkpointing; resume by `thread_id`, tested across a graph rebuild |
@@ -1618,6 +1647,10 @@ And the brief's own definition of "production ready":
 | `build(ci)` | 13 — Dockerised stack, CI pipeline, README · `v0.7-deployable` |
 | `docs(report)` | 14 — final technical report, completed progress log · `v1.0` |
 | `feat(agent)` + `docs` | 15 — design-conformance pass: four gaps closed |
+| `feat(llm)` · `feat(ui)` | 16 — Groq backend, result rows reach synthesis, hand-written frontend replaces Streamlit |
+| `feat(product)` | 17 — dashboards, saved reports, exports, confidence scoring |
+| `feat(enterprise)` | 18 — organisations, data sources, sharing, alerts, audit |
+| `feat(report)` | 19 — the answer as an eight-section BI report |
 
 ### Appendix E — Glossary
 
@@ -1647,6 +1680,8 @@ And the brief's own definition of "production ready":
   `statement_timeout`, `EXPLAIN`, `pg_constraint`
 - FastAPI, Plotly, pandas, pydantic-settings, structlog documentation
 - reportlab and openpyxl documentation — the PDF and workbook exporters
+- `cryptography` (Fernet) documentation — authenticated symmetric encryption for stored configurations
+- PostgreSQL documentation — `jsonb` operators, `percentile_cont`, `ON CONFLICT`, partial indexes
 - MDN Web Docs — SVG paths and arcs, for the chart renderer in `app.js`
 
 ---
@@ -1783,18 +1818,254 @@ A test asserts the page actually *calls* each new endpoint. It is a cheap assert
 caught the real failure mode twice in this project: something built, shipped, and never wired to
 a caller — which no backend test can see.
 
+---
+
+## 28. Phase 3: organisations, data sources, sharing, alerts and audit
+
+Phase 2 made the output a product. Phase 3 makes the *system* one: it now serves more than one
+company, which changes the central question from "is this answer right" to "who is allowed to see
+it".
+
+### 28.1 Where the tenant boundary lives
+
+Migration 005 adds organisations, users, memberships, API keys, data sources, share links, alerts
+and an audit log, and adds `organization_id` to `runs` and `reports`.
+
+The interesting decision was not the column. It was **what happens to the rows that already
+existed**: they are backfilled into a *default organisation*, and the column is `NOT NULL` with a
+default from the moment it exists. A nullable owner forces every read to decide what an unowned row
+means, and the first careless decision there is a boundary leak. `Principal.in_organization(None)`
+returns False for the same reason, even though the schema should make it unreachable —
+"unreachable" is a claim about today's code.
+
+**The filter is in the SQL, not in the route.** A route can be added next month by somebody who has
+not read the rule; a query that filters by `organization_id` cannot return another tenant's row
+whoever calls it. Exactly two functions look across organisations — resolving an API key and
+resolving a share token — and both say so in their docstring, because they are the two places to
+read carefully.
+
+**404, not 403, for another organisation's resource.** A 403 confirms the resource exists, and a
+sequence of those confirmations is an enumeration of another company's work. 403 is reserved for a
+caller who *is* in the right organisation but whose role is too low, where telling them to ask for
+access is useful and reveals nothing.
+
+### 28.2 Identity without a login
+
+There is no session layer, and that is stated rather than omitted: adding one to satisfy the phrase
+"after login" would ship password storage, reset flows and an account model nothing else here
+needs. Instead a caller presents `Authorization: Bearer <key>` and resolves to a `Principal` —
+organisation, user, role.
+
+| `REQUIRE_AUTHENTICATION` | Behaviour |
+|---|---|
+| `false` (default) | a request with no key is the default organisation's owner, flagged `anonymous` so a page cannot mistake a demo for a tenant |
+| `true` | a valid key is mandatory; there is no anonymous path at all |
+
+A **bad** key is 401 in both modes. Collapsing "wrong key" into "no key" would silently downgrade a
+revoked key into a demo session with owner rights, which is the worst possible reading of a failed
+credential.
+
+Roles are a strict ladder — `viewer < analyst < admin < owner` — rather than a permission matrix. A
+dozen actions do not need a matrix, and a ladder cannot be misconfigured into letting a viewer
+invite people. Two structural refusals: the **last owner** cannot be removed or demoted, and
+**owner is not invitable** (ownership is transferred by promoting a member, so a typo cannot create
+a second owner).
+
+### 28.3 Two techniques for two kinds of secret
+
+| Secret | Technique | Why |
+|---|---|---|
+| Data source `connection_config` | **encrypted** (Fernet: AES-128-CBC + HMAC) | it must be recovered to open a connection |
+| API keys, share tokens | **hashed** (SHA-256) | nothing needs to read them back, only to check a presented value |
+
+Conflating these is the common mistake. Storing an API key recoverably would let an operator with a
+database dump *act as* a customer — a different and worse risk than reading their warehouse host.
+
+`SECRETS_KEY` lives in the environment, never in the database: a key stored beside the ciphertext it
+protects is obfuscation, and one backup dump would contain both halves. Its absence is a **503 at
+write time** — the service works and the deployment is incomplete — because storing a configuration
+in the clear "for now" is the one thing that endpoint must not do.
+
+Redaction is the other half of the promise:
+
+- `connection_config` is **not in the select list** of any read the API uses. Excluded rather than
+  stripped afterwards, because a column that never leaves the database cannot be forgotten by a
+  response model written later.
+- The redaction is an **allowlist per source type**, so a field added next year is hidden until
+  somebody classifies it.
+- A withheld key is **named, not starred out**: `{"_withheld": ["password"]}` says what is missing,
+  while `{"password": "••••••"}` is still a statement about its length.
+- The audit trail records the **redacted summary**, never the config — an audit entry holding a
+  password would defeat the encryption on the row it describes.
+
+Fernet is authenticated, so a tampered ciphertext or a rotated key fails to decrypt rather than
+decrypting to something plausible.
+
+### 28.4 Sharing as a capability with a lifetime
+
+A share is a row that can expire and be revoked, not a boolean on the report.
+
+| Visibility | Who can read |
+|---|---|
+| `private` | only the member who saved it |
+| `team` | anybody in the organisation |
+| `public` | anybody holding a link |
+
+Expiry is enforced **in the SQL**, alongside revocation and the token match — checking it in Python
+would leave the decision to whichever caller remembered. A **team link still requires membership**,
+so "share with my team" cannot quietly mean "share with the internet". Unknown, expired and revoked
+links are all the same 404, because distinguishing them tells the holder of a dead link whether it
+ever existed. The shared view is narrower than the owner's: no organisation id, no run id, no
+saver.
+
+### 28.5 Alerts that cannot invent a metric
+
+An alert watches an **approved metric**, checked against the registry at creation. It runs
+unattended, so a definition somebody invented once would keep firing about a number nobody agreed
+on.
+
+- `drop` and `spike` are relative to a **baseline** — the mean of the periods *before* the observed
+  one. Including the observed period would dilute the very change being detected, and the schema
+  refuses a one-period window because a value compared to itself can never move, which reads as
+  "nothing is wrong".
+- `below` and `above` are absolute, for a floor that is contractual rather than statistical.
+
+Every evaluation goes through `metric_query` — registry renders, guard validates, `analyst_ro`
+executes, `sql_audit` records — and **creates a real run** owned by the alert's organisation. The
+first version used a throwaway id until the foreign key on `tool_calls` refused it, correctly: a
+tool call with no run is a query nobody can trace back to a reason.
+
+Both outcomes are recorded, fired or not. Keeping only breaches would leave no way to tell a quiet
+alert from one that stopped running, and "we were never alerted" is the sentence that follows the
+second.
+
+### 28.6 The audit trail
+
+Append-only by intent: the repository exposes `audit` and `audit_entries` and nothing else, and a
+test asserts that no update, delete or purge function *exists* rather than merely that a statement
+fails. `actor_label` is stored alongside `actor_user_id`, so an entry stays readable after the user
+row is gone. An unauthenticated action is labelled as such. An audit write never fails the action it
+describes — a failed insert is logged at error level and the invitation still happened.
+
+### 28.7 Three real bugs the isolation tests caught
+
+- **A saved report landed in the default organisation** rather than the caller's — invisible to the
+  person who saved it and visible to a tenant with nothing to do with it. The route was never
+  taught about tenancy. This is why the tests create *two* organisations and check both directions:
+  asserting only that B cannot see A's row leaves the symmetric bug undetected.
+- **An alert evaluation had no run**, and the foreign key on `tool_calls` refused it. Correct: a
+  query with no run is one nobody can trace back to a reason.
+- **`require_api_key` collided with an existing method** of that name on `Settings`, so pydantic
+  tried to validate a bound method as a boolean. Renamed `require_authentication`.
+
+And one place where the **constraint was right and the test was wrong**:
+`report_shares_expiry_is_in_the_future` refused a test that back-dated a just-created share. The
+test now ages the share properly.
+
+### 28.8 What Phase 3 does not do
+
+- **No row-level security in the warehouse.** `analyst_ro` is one role for every tenant. The
+  isolation is over the agent's own tables; multi-tenant *analytical* data would need RLS or a
+  schema per tenant.
+- **Data sources are stored, not yet used.** A registered source is encrypted, listed and redacted
+  correctly; the agent still queries the seeded `analytics` schema. Pointing it at a customer's own
+  warehouse needs a per-source guard catalogue and a per-source read-only role, and that is the next
+  real piece of work rather than a finishing touch.
+- **No key rotation**, **no per-tenant rate limiting**, and the audit trail is **not
+  tamper-evident** — append-only through the application, which stops the application editing it,
+  not an operator with `UPDATE` on the table.
+
+[docs/security-model.md](docs/security-model.md) is the full treatment, including a section that
+states these plainly rather than listing only the strengths.
+
+---
+
+## 29. The answer as a report
+
+The output is structured as a business intelligence report rather than a chat reply: eight sections,
+in the order a reader needs them.
+
+| Section | Where its content comes from |
+|---|---|
+| 1 · Executive summary | the conclusion, with its confidence score |
+| 2 · Key findings | the model's structured output: title, measured impact, severity |
+| 3 · Investigation process | **derived from the audit trail** — metrics, tables, questions, steps |
+| 4 · Hypothesis testing | the hypotheses and their verdicts, grouped by the finding they explain |
+| 5 · Visual analytics | the agent's charts, each captioned with the purpose of its query |
+| 6 · Evidence & traceability | analysis id, counts, and the SQL **and its rows** one click away |
+| 7 · Confidence | the score and its five factors (§27.4) |
+| 8 · Recommended actions | the model's structured output: action, rationale, priority |
+
+### 29.1 Why this could not be presentation alone
+
+The brief asked for the output experience to improve and the backend to be left alone. Four sections
+needed data the agent did not emit — findings with a title, impact and severity; recommended
+actions; the purpose behind each chart; and the rows behind a query. Deriving those in the page would
+have meant **inventing** them, and a persuasive layout over invented content is the worst thing this
+project could ship.
+
+So the **output contract** was extended — two new fields on the synthesis schema, one new read
+endpoint — and the **investigation logic was not touched**: the graph, the guard, the hypothesis
+loop and the budgets are unchanged.
+
+### 29.2 Two rules that keep the page honest
+
+**Judgements are filtered against what ran.** Key findings and recommendations come from the model,
+and every citation is checked against the queries that actually executed. A headline card is the
+most prominent thing on the page and therefore the worst possible place for a number from a query
+that never ran.
+
+**Record is derived, not narrated.** The investigation section reads metrics off the definition
+versions in each query's purpose, tables off the `referenced_objects` the guard resolved, questions
+off the hypotheses that reached a terminal state, and steps off the nodes that ran. Asking the model
+to describe its own process would produce a fluent paragraph that may or may not match what
+happened.
+
+Where the analysis produced no headlines, the page falls back to the findings the investigation
+raised **and says so**. A card carrying a title the analysis never produced would be the one thing
+on the page that is not evidence.
+
+### 29.3 A gap in the traceability claim, found by building this
+
+Rebuilding a `metric_query` result failed with a syntax error at its own `%(date_from)s` placeholder:
+the audit trail stored the statement but **not the values bound to it**.
+
+That is not cosmetic. "Every conclusion is traceable to its queries" is hollow if a reviewer cannot
+re-run the query a figure came from, and the parameterised path is exactly the one the metrics layer
+pushes work through. Migration 006 adds `sql_audit.parameters`; a pre-migration row now answers
+**410 with an explanation** rather than surfacing a driver error as a 500 — the query is real and
+its rows are simply no longer recoverable, which is a fact about the trail rather than a fault in
+the service.
+
+Verified live: the old query returns the 410, and a new one returns the twelve real monthly figures.
+
 ## Closing note
 
-The system that exists is, in the parts that can be verified without a model, complete and
+The system that exists is, in the parts that can be verified without a live model, complete and
 tested: the safety layer holds against 79 attacks, the metrics layer is a guarantee rather than a
-convention, the investigation loop cannot be short-circuited, the trace reconstructs any run, and
-one command brings the whole stack up on a clean machine.
+convention, the investigation loop cannot be short-circuited, the tenant boundary is enforced in
+SQL and checked from both directions, credentials are encrypted with a key held elsewhere, the
+trace reconstructs any run — including the values bound to a parameterised query — and one command
+brings the whole stack up on a clean machine. 670 tests pass; `ruff` and `mypy` are clean.
 
-What it has not yet done is answer a real question with a real model. That is one API key and
-roughly one afternoon away: `make evals` will produce the baseline report, and §19.5 lists exactly
-which numbers it will fill in. Everything needed to obtain them — the questions, the reference
-queries, the graders, the runner and the report generator — is built, and the suite's own
-`--validate` mode already passes.
+What it has still not done is answer a real question with a real model *at scale*. A single live run
+completed end to end (§22), and the evaluation suite validates in full — 32 questions, every
+reference query executing and passing the guard — but the **scored** run does not exist, because the
+available model tier's per-minute token limit makes 32 questions a multi-hour exercise. §19.5 lists
+exactly which numbers it would fill in.
 
-The judgement this project is really about is the one in §21.2: knowing which claims the work
-supports and which it does not, and writing the second kind down as plainly as the first.
+Three habits shaped the work more than any single decision, and each earned its place by catching
+something:
+
+- **Enforce in the schema or the query, not in the prose.** Four database constraints and a
+  tenant filter in SQL caught bugs that code review had not: an unevidenced finding, an execution
+  without clearance, a report saved into the wrong organisation, an alert query with no run.
+- **Read the document back against the code.** The Step 15 conformance pass found four places where
+  the implementation had quietly settled for less than the design promised — none of which any test
+  could have caught, because each was a gap between what was promised and what the code was asked
+  to do.
+- **Say what is not done.** Every section here that lists a limitation exists because a document
+  that lists only strengths is marketing, and the reader of a submission is entitled to know which
+  claims the work supports and which it does not.
+
+The judgement this project is really about is that last one.
