@@ -219,7 +219,7 @@ def start_run(
     state = initial_state(str(run_id), thread_id, question, requested_by)
 
     with bound(run_id=str(run_id), thread_id=thread_id):
-        return _drive(graph, state, thread_id, run_id)
+        return drive(graph, state, thread_id, run_id)
 
 
 def resume_run(thread_id: str, updates: dict[str, Any] | None = None, graph: Any | None = None) -> dict[str, Any]:
@@ -240,11 +240,17 @@ def resume_run(thread_id: str, updates: dict[str, Any] | None = None, graph: Any
         graph.update_state(config, updates)
 
     with bound(run_id=str(run_id), thread_id=thread_id):
-        return _drive(graph, None, thread_id, run_id)
+        return drive(graph, None, thread_id, run_id)
 
 
-def _drive(graph: Any, state: AnalystState | None, thread_id: str, run_id: uuid.UUID) -> dict[str, Any]:
-    """Invoke the graph, turning the failures it cannot handle into a recorded outcome."""
+def drive(
+    graph: Any, state: AnalystState | None, thread_id: str, run_id: uuid.UUID
+) -> dict[str, Any]:
+    """Invoke the graph, turning the failures it cannot handle into a recorded outcome.
+
+    Public because the API drives a run whose row it already created, rather than going through
+    ``start_run`` and getting a second one.
+    """
     config = thread_config(thread_id)
     try:
         return dict(graph.invoke(state, config))
