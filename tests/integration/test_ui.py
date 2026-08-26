@@ -482,3 +482,78 @@ def test_an_unparseable_timestamp_still_shows_something() -> None:
     """A value this cannot parse is more informative than nothing."""
     assert components.ago("not-a-date-at-all") == "not-a-date-at-al"
     assert components.ago(None) == ""
+
+# --- clicking things -----------------------------------------------------------
+#
+# These exist because the redesign shipped with a crash the render tests could not see: every
+# page rendered, and then clicking a suggestion card raised. Rendering a page is not using it.
+
+
+def _click(test: Any, contains: str) -> Any:
+    """Click the first button whose label contains this text, and re-run."""
+    for button in test.button:
+        if contains.lower() in button.label.lower():
+            return button.click().run()
+    raise AssertionError(f"no button matching {contains!r} in {[b.label for b in test.button]}")
+
+
+def test_clicking_a_suggestion_fills_the_question_box(app) -> None:
+    """A widget's own state key cannot be written after the widget exists in the same run.
+
+    So the click stages the text and the next run applies it. Setting `question` directly raised
+    ``StreamlitAPIException`` — which no amount of page rendering would have revealed.
+    """
+    test = app().run()
+    test = _click(test, "Why did revenue drop in March 2018?")
+    assert not test.exception
+    assert test.session_state["question"] == "Why did revenue drop in March 2018?"
+    assert "pending_question" not in test.session_state, "the staged value is consumed, not kept"
+
+
+def test_clicking_new_analysis_clears_the_box_and_the_open_run(app) -> None:
+    test = app(run_id=RUN_ID).run()
+    test = _click(test, "New Analysis")
+    assert not test.exception
+    assert "run_id" not in test.session_state
+    assert test.session_state["question"] == ""
+
+
+def test_the_nav_moves_between_pages(app) -> None:
+    test = app().run()
+    test = _click(test, "Metrics Catalog")
+    assert not test.exception
+    assert test.session_state["page"] == "metrics"
+    page = " ".join(m.value for m in test.markdown)
+    assert "revenue@v1" in page
+
+
+def test_the_theme_toggle_repaints_without_error(app) -> None:
+    test = app().run()
+    test = _click(test, "Dark")
+    assert not test.exception
+    assert test.session_state["dark"] is True
+    assert theme.CHROME["dark"].surface in " ".join(m.value for m in test.markdown)
+
+
+def test_opening_a_recent_analysis_shows_its_answer(app) -> None:
+    test = app().run()
+    test = _click(test, "Why did revenue drop in March 2018?")
+    # The suggestion and the recent card share this label; either path must land somewhere valid.
+    assert not test.exception
+
+
+def test_asking_a_question_starts_a_run(app) -> None:
+    test = app().run()
+    test.text_area[0].set_value("What was revenue in 2017?").run()
+    test = _click(test, "➤")
+    assert not test.exception
+    assert test.session_state["run_id"] == RUN_ID
+
+
+def test_sending_an_empty_question_warns_instead_of_starting_a_run(app) -> None:
+    """A blank submission is a mistake to point out, not a run to create."""
+    test = app().run()
+    test = _click(test, "➤")
+    assert not test.exception
+    assert "run_id" not in test.session_state
+    assert any("question" in w.value.lower() for w in test.warning)

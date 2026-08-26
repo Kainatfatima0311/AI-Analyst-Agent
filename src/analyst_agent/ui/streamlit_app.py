@@ -108,9 +108,9 @@ def sidebar() -> tuple[str, str]:
             st.rerun()
 
         ui.side_status(api().healthy())
+        st.session_state.setdefault("who", "analyst@example.com")
         who = st.text_input(
             "Signed in as",
-            value=st.session_state.get("who", "analyst@example.com"),
             help="Recorded with any approval decision you make.",
             key="who",
         )
@@ -130,13 +130,13 @@ def header(title: str, subtitle: str) -> None:
         theme_col, new_col = st.columns([1, 1.25])
         with theme_col:
             label = "☀ Light" if st.session_state.get("dark") else "☾ Dark"
-            if st.button(label, use_container_width=True, key="theme-toggle"):
+            if st.button(label, width="stretch", key="theme-toggle"):
                 st.session_state["dark"] = not st.session_state.get("dark")
                 st.rerun()
         with new_col:
-            if st.button("+  New Analysis", type="primary", use_container_width=True):
+            if st.button("+  New Analysis", type="primary", width="stretch"):
                 st.session_state.pop("run_id", None)
-                st.session_state["question"] = ""
+                st.session_state["pending_question"] = ""
                 st.session_state["page"] = "ask"
                 st.rerun()
 
@@ -145,6 +145,12 @@ def header(title: str, subtitle: str) -> None:
 
 
 def ask_card() -> None:
+    # Streamlit refuses a write to a widget's own state key once that widget has been created in
+    # this run, so a suggestion click cannot set `question` directly — it stages the text and
+    # this applies it *before* the text area exists.
+    if "pending_question" in st.session_state:
+        st.session_state["question"] = st.session_state.pop("pending_question")
+
     # A real bordered container, not a wrapper div: Streamlit closes an unclosed div in
     # st.markdown immediately, so markup cannot wrap widgets. The CSS styles the container.
     with st.container(border=True):
@@ -168,7 +174,7 @@ def ask_card() -> None:
             ui.char_counter(len(question or ""), QUESTION_LIMIT)
         with send:
             submitted = st.button(
-                "➤", type="primary", use_container_width=True, help="Investigate"
+                "➤", type="primary", width="stretch", help="Investigate"
             )
 
     if submitted:
@@ -187,8 +193,8 @@ def suggestions() -> None:
     columns = st.columns(len(EXAMPLES))
     for column, (glyph, example) in zip(columns, EXAMPLES, strict=True):
         with column:
-            if st.button(f"{glyph}   {example}", key=f"eg-{example}", use_container_width=True):
-                st.session_state["question"] = example
+            if st.button(f"{glyph}   {example}", key=f"eg-{example}", width="stretch"):
+                st.session_state["pending_question"] = example
                 st.rerun()
 
 
@@ -203,7 +209,7 @@ def recent_strip() -> None:
         with column:
             label = run["question"]
             label = label if len(label) <= 52 else label[:51] + "…"
-            if st.button(label, key=f"recent-{run['run_id']}", use_container_width=True):
+            if st.button(label, key=f"recent-{run['run_id']}", width="stretch"):
                 open_run(run["run_id"])
             st.markdown(
                 f'<div class="recent{" current" if run["run_id"] == current else ""}" '
@@ -416,7 +422,7 @@ def outcome_chart(counts: dict[str, int]) -> None:
     )
     figure.update_xaxes(showgrid=True, zeroline=False, title=None)
     figure.update_yaxes(showgrid=False, autorange="reversed", title=None)
-    st.plotly_chart(figure, use_container_width=True)
+    st.plotly_chart(figure, width="stretch")
 
 
 # --- saved --------------------------------------------------------------------
@@ -436,7 +442,7 @@ def saved_page() -> None:
     for run in runs:
         left, right = st.columns([5, 1])
         with left:
-            if st.button(run["question"], key=f"saved-{run['run_id']}", use_container_width=True):
+            if st.button(run["question"], key=f"saved-{run['run_id']}", width="stretch"):
                 open_run(run["run_id"])
         with right:
             st.markdown(

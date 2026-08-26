@@ -64,7 +64,7 @@ def nav(current: str) -> str:
                 f'<div class="nav-current"><span class="ico">{icon}</span>{label}</div>',
                 unsafe_allow_html=True,
             )
-        elif st.button(f"{icon}   {label}", key=f"nav-{key}", use_container_width=True):
+        elif st.button(f"{icon}   {label}", key=f"nav-{key}", width="stretch"):
             chosen = key
     return chosen
 
@@ -257,7 +257,7 @@ def chart_panel(
     chart = charts_data[index]
     figure = go.Figure(chart["spec"])
     figure.update_layout(**chart_layout(mode), height=290, showlegend=len(figure.data) > 1)
-    st.plotly_chart(figure, use_container_width=True, key=f"chart-{chart.get('chart_id', index)}")
+    st.plotly_chart(figure, width="stretch", key=f"chart-{chart.get('chart_id', index)}")
     st.markdown(
         f'<div class="evidence"><div class="meta">from query {chart["query_id"]}</div></div>',
         unsafe_allow_html=True,
@@ -370,7 +370,7 @@ def charts(items: list[dict[str, Any]], mode: Mode = "light") -> None:
         figure = go.Figure(chart["spec"])
         figure.update_layout(**chart_layout(mode))
         st.plotly_chart(
-            figure, use_container_width=True, key=f"full-chart-{chart.get('chart_id', index)}"
+            figure, width="stretch", key=f"full-chart-{chart.get('chart_id', index)}"
         )
         st.caption(f"From query {chart['query_id']}")
 
