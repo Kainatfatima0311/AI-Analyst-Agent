@@ -10,7 +10,7 @@ runtime flow of a single question, the data model, and the deployment topology.
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ Presentation                                                                 │
-│   ui/streamlit_app.py — question box, live timeline, findings, charts,       │
+│   api/static/ — index.html · app.css · app.js. Question box, live status,     │
 │   evidence drawer, approval controls.  Talks only to the API over HTTP/SSE.  │
 └───────────────────────────────┬──────────────────────────────────────────────┘
                                 │ HTTP + SSE
@@ -158,7 +158,7 @@ docker compose
 ├── api    uvicorn         analyst_agent.api.main:app, port 8000
 │          depends_on: db healthy, seed completed
 │          healthcheck: GET /readyz
-└── ui     streamlit       port 8501, depends_on: api healthy
+                           (the interface is served by api at /app/)
 ```
 
 The image is multi-stage and runs as a non-root user. Nothing depends on a developer's machine
@@ -176,7 +176,7 @@ acceptance test for Step 13.
 | SQL validation | `sqlglot` AST inspection | Regex or keyword denylist | A denylist is bypassable by comments, casing, unicode and nesting. Parsing is not. |
 | Read-only enforcement | A dedicated Postgres role | Validation only | Defence in depth: even a total validator bypass cannot write |
 | Follow-up analysis | An enumerated pandas operation set | Executing model-written Python in a sandbox | Removes a whole class of escape risk; the cost is expressiveness, and it is documented as a limitation |
-| Charts | Plotly plus kaleido | matplotlib | Interactive in Streamlit, static PNG for the report, one library for both |
+| Charts | Plotly plus kaleido server-side; inline SVG in the browser | matplotlib | One library produces the spec and the static PNG for the report; the page draws the spec as SVG, so it needs no chart library of its own |
 | Metrics layer | YAML definitions in the repo | A prompt listing the formulas | Versioned, reviewable, testable, and diffable; a prompt is none of those |
 | Dataset | Olist public e-commerce data | Synthetic generated data | Real messiness (cancellations, delivery delays, category mix shifts) gives the diagnostic questions genuine confounds to disentangle |
-| Interface | Streamlit | React SPA | The deliverable is analytical behaviour and traceability, not front-end engineering; Streamlit shows the trace and approvals with far less code |
+| Interface | Hand-written HTML/CSS/JS served by the API | Streamlit; a React SPA | Streamlit was the first choice and was replaced: a widget toolkit owns its own markup, so a specified design can only be approximated through CSS on top of it. A React SPA would add a build step and a second deployable for a page this size. Plain files served from the same origin give full control of the layout and keep the deployment one process |

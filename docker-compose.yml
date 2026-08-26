@@ -85,24 +85,5 @@ services:
       start_period: 15s
     restart: unless-stopped
 
-  ui:
-    build: .
-    image: analyst-agent:latest
-    container_name: analyst-ui
-    environment:
-      <<: *service-env
-      # Reaches the API by service name, not localhost — inside its own container, localhost is
-      # the UI itself.
-      API_BASE_URL: http://api:8000
-    ports:
-      - "${UI_PORT:-8501}:8501"
-    depends_on:
-      api:
-        condition: service_healthy
-    command: >
-      streamlit run src/analyst_agent/ui/streamlit_app.py
-      --server.port 8501 --server.address 0.0.0.0 --server.headless true
-    restart: unless-stopped
-
 volumes:
   pgdata:

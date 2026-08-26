@@ -32,8 +32,8 @@ dependencies = [
     "numpy>=2.0,<3",
     "plotly>=6.0",
     "kaleido>=1.0",
-    # UI
-    "streamlit>=1.40",
+    # The interface is hand-written HTML/CSS/JS served by the API, so it needs no runtime
+    # dependency of its own.
     "requests>=2.32",
     # Config / logging
     "pyyaml>=6.0",

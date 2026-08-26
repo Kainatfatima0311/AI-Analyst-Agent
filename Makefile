@@ -64,8 +64,8 @@ catalog:
 api:
 	uvicorn analyst_agent.api.main:app --reload --port 8000
 
-ui:
-	streamlit run src/analyst_agent/ui/streamlit_app.py
+# The interface is served by the API at /app/, so there is no second process to start.
+ui: api
 
 evals:
 	python -m evals.runner --all --report evals/reports/

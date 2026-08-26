@@ -7,8 +7,8 @@ what it finds, and returns a conclusion you can trace back to the exact queries 
 Copy-Item .env.example .env      # fill in ANTHROPIC_API_KEY and the two passwords
 docker compose up                # database, dataset, API, interface
 
+# UI   -> http://localhost:8000/app/
 # API  -> http://localhost:8000/docs
-# UI   -> http://localhost:8501
 ```
 
 A clean clone plus `docker compose up` is the whole setup. Nothing depends on a developer's
@@ -18,7 +18,7 @@ Every published port is parameterised, so a port already taken by something else
 does not mean editing the compose file:
 
 ```powershell
-$env:API_PORT = "8010"; $env:UI_PORT = "8511"; docker compose up
+$env:API_PORT = "8010"; docker compose up      # UI at /app/ on the same port
 ```
 
 ---
@@ -65,7 +65,9 @@ reviewer wants to know.
 ## Stack
 
 FastAPI · LangGraph · Anthropic Claude (`claude-opus-5`) · PostgreSQL 17 · sqlglot · pandas ·
-Plotly · Streamlit, plus a YAML metrics layer holding approved KPI definitions.
+Plotly, plus a YAML metrics layer holding approved KPI definitions. The interface is
+hand-written HTML/CSS/JS served by the API itself at `/app/` — same origin, no build step, no
+third-party request.
 
 LangGraph supplies the state graph, the Postgres checkpointer and human-approval pauses. The LLM
 calls go through one thin wrapper on the official `anthropic` SDK rather than a LangChain
@@ -87,8 +89,7 @@ python scripts/migrate.py        # agent state tables
 python scripts/seed_db.py        # dataset (local CSVs -> Kaggle -> synthetic)
 python scripts/smoke.py          # prove analyst_ro cannot write
 
-make api                         # http://localhost:8000/docs
-make ui                          # http://localhost:8501
+make api                         # UI at /app/, API docs at /docs
 ```
 
 | Command | What it does |

@@ -44,7 +44,8 @@ metric definitions without human approval.
 ## 2. System architecture
 
 ```
-Streamlit UI ──HTTP/SSE──> FastAPI ──> LangGraph agent ──> Postgres checkpointer (app_rw)
+Browser UI  ──HTTP/SSE──> FastAPI ──> LangGraph agent ──> Postgres checkpointer (app_rw)
+(served at /app/)
                               |             |
                               |             +- metric_lookup      approved KPI registry
                               |             +- schema_inspector    allow-listed metadata

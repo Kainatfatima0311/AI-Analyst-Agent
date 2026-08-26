@@ -51,7 +51,8 @@ The lesson is that a design document only stays true if something reads it back.
 ## 2. Architecture
 
 ```
-Streamlit UI ──HTTP/SSE──> FastAPI ──> LangGraph agent ──> Postgres checkpointer (app_rw)
+Browser UI  ──HTTP/SSE──> FastAPI ──> LangGraph agent ──> Postgres checkpointer (app_rw)
+(served at /app/)
                               │             │
                               │             ├─ metric_lookup      approved KPI registry
                               │             ├─ metric_query      ─┐

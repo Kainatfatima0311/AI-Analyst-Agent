@@ -24,6 +24,7 @@ Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known is
 | 13 | Dockerized stack, CI, README | ✅ | 2026-08-26 | `build(ci)` / `v0.7-deployable` |
 | 14 | Final technical report | ✅ | 2026-08-26 | `docs(report)` / `v1.0` |
 | 15 | Design-conformance pass — four gaps closed | ✅ | 2026-08-26 | `feat(agent)` — tool-calling nodes, `metric_query`, wired gates, distinctness |
+| 16 | Groq backend, evidence in context, new interface | ✅ | 2026-08-26 | `feat(llm)` · `feat(ui)` — provider swap, result rows reach synthesis, hand-written frontend |
 
 ## Key metrics (filled in as they are measured)
 
@@ -964,3 +965,86 @@ metric is computed, not reconstructed).
 The lesson is the one this step exists to record: a design document only stays true if something
 reads it back. Nothing in the test suite could have caught any of these four, because each one was
 a gap between what the document promised and what the code was asked to do.
+
+
+### Step 16 — A second provider, a real bug, and a new interface
+
+**Status:** ✅ Done · **Date:** 2026-08-26 · **Commits:** `feat(llm)`, `fix(agent)`, `feat(ui)`
+
+Three pieces of work, in the order they happened. **533 tests pass** across 49 source modules;
+`ruff` and `mypy` clean.
+
+**1 · A Groq backend behind the same wrapper.** No Anthropic credit was available, so
+`agent/llm_groq.py` adds a `GroqLLM` that subclasses `LLM` and translates to Groq's
+OpenAI-compatible chat completions API. Nothing in `nodes/`, `graph.py` or `tool_loop.py`
+changed: every annotation in the project already said `LLM`, and a provider swap should not
+require touching sixteen nodes to prove it is safe. `LLM_PROVIDER=groq` selects it.
+
+The translation is where the risk lives, not the HTTP call. The nodes build Anthropic-shaped
+messages — content-block lists, `tool_use` on the assistant turn, `tool_result` blocks in a
+following user turn — and chat completions wants a flat string, `tool_calls` on the assistant
+message, and each result as its own `role: "tool"` message. That conversion has its own tests.
+
+Four provider differences surfaced only against the live API, and each is worth recording:
+
+* the base URL must be the host alone — the SDK appends `/openai/v1` itself, and including it
+  produced a 404;
+* `max_completion_tokens` counts against the per-minute token allowance *before* generating, so a
+  16k request was refused outright on a free tier with an 8k limit. A separate `GROQ_MAX_TOKENS`
+  now applies, and a rate-limit-shaped 413 is retried after the server's own `retry-after`
+  rather than failing the run;
+* structured output was silently falling back to the weaker `json_object` mode, because this
+  provider requires `additionalProperties: false` on every object in the schema. The tightening
+  that strict tool use already did is now shared by both, so `json_schema` is accepted directly;
+* the provider validates tool calls server-side and fails the whole request with a 400 when the
+  model names a tool outside `tools`. That is the wrong outcome here — the tool loop is built to
+  answer an out-of-allowlist call with a *refusal in the tool result*, which the model can read
+  and correct. Validation is delegated back to us, where the allowlist already lives.
+
+**What Groq does not have is documented rather than hidden:** no prompt caching (so
+`cache_read_tokens` is honestly zero and the full prefix is paid for every turn), no adaptive
+thinking, and no `stop_reason == "refusal"` — a refusal arrives as ordinary text and cannot be
+detected structurally. That last one is a real loss of signal.
+
+**2 · The first live run found a genuine bug.** A question ran end to end in 339 seconds: three
+queries, the approved `revenue@v1` definition rendered with bound parameters, two hypotheses
+generated, and the "delayed reporting" explanation *refuted* by its own query. The pipeline
+worked. The numbers in the conclusion did not: two of twelve monthly figures were exact and the
+other ten were plausible interpolations between them.
+
+The cause was not the model. `_history` gave every node downstream of `interpret` only
+`"<query_id> [allowed] <purpose> -> 12 rows"` — **the actual values never reached synthesis.** The
+model reconstructed them from its own earlier prose, which is exactly the failure this project
+exists to prevent, and no amount of prompting fixes it because the numbers were genuinely absent
+from the context. `_result_tables` now carries every executed query's rows, bounded on three axes
+(40 rows, 10 columns, 8,000 characters) with **every cut stated in the text** — a silently
+truncated table invites the model to invent the remainder, which is the same bug in a smaller
+costume.
+
+**3 · The interface was rewritten, and Streamlit removed.** A design was supplied and the
+Streamlit implementation could only approximate it: a widget toolkit owns its own markup, so
+matching a specified layout means layering CSS over someone else's structure. Three rounds went
+that way. The replacement is `api/static/` — `index.html`, `app.css`, `app.js` — served by the
+API itself at `/app/`.
+
+Same origin, and that is the substantive part rather than packaging convenience: the interface
+has no way to reach anything except the `/v1` endpoints, so "the UI never touches the database"
+became a property of the deployment instead of a promise in a document. The compose file lost a
+service, `pyproject` lost the `streamlit` dependency, and the stack is now one process.
+
+Charts are drawn as **inline SVG from the stored Plotly spec** — no CDN, no bundle, no build
+step. `app.js` never picks a colour for data: the series colours arrive inside the spec, chosen
+server-side from the validated palette, because a renderer inventing its own would break the rule
+that a colour follows the entity rather than the context it is viewed in. A test asserts the page
+requests nothing from a third party and never names the database.
+
+**Also added:** `donut` as a chart type, so a part-to-whole breakdown is a real capability rather
+than something the UI fakes. The share sits in the legend beside each label — a ring of
+percentages is unreadable at panel size, and a legend label survives a screenshot, a grey print
+and a reader who cannot separate two hues. It refuses a measure that can go negative, because
+slices that do not sum to the whole are a lie the picture cannot show.
+
+**The lesson worth keeping** is from the third piece. A test suite of 36 UI tests was green while
+clicking a suggestion card raised an exception, because every test *rendered* pages and none
+*clicked* anything. Rendering a page is not using it; the interaction tests came second, which is
+one round too late.

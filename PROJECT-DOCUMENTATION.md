@@ -7,8 +7,8 @@
 | **Project** | An autonomous agent that answers business questions from a data warehouse, writes SQL that is validated before it runs, tests more than one explanation for what it finds, and returns a conclusion traceable to the exact queries behind it |
 | **Repository** | `https://github.com/Kainatfatima0311/AI-Analyst-Agent` |
 | **Language / runtime** | Python 3.12+ (developed on 3.13.5) |
-| **Core stack** | FastAPI · LangGraph · Anthropic Claude (`claude-opus-5`) · PostgreSQL 17 · sqlglot · pandas · Plotly · Streamlit |
-| **Size** | 53 source modules (9,605 lines) · 22 test modules (4,867 lines) · **473 tests passing** |
+| **Core stack** | FastAPI · LangGraph · Anthropic Claude (`claude-opus-5`) or Groq · PostgreSQL 17 · sqlglot · pandas · Plotly · a hand-written HTML/CSS/JS interface served by the API |
+| **Size** | 49 source modules · 23 test modules · **533 tests passing** |
 | **Static analysis** | `ruff` clean · `mypy --strict` clean |
 | **Document date** | 26 August 2026 |
 
@@ -204,9 +204,10 @@ become an answer simply does not exist.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ Presentation — src/analyst_agent/ui/                                         │
-│   streamlit_app.py — question box, live timeline, findings, charts,          │
-│   evidence drawer, approval controls. Talks only to the API.                 │
+│ Presentation — src/analyst_agent/api/static/                                 │
+│   index.html · app.css · app.js — question box, live status, findings,       │
+│   charts, evidence drawer, approval controls. Served by the API at /app/,    │
+│   same origin, no build step, no third-party request.                        │
 └───────────────────────────────┬──────────────────────────────────────────────┘
                                 │ HTTP + Server-Sent Events
 ┌───────────────────────────────▼──────────────────────────────────────────────┐
@@ -343,10 +344,10 @@ because a decision presented without its cost is advocacy rather than engineerin
 | SQL validation | **`sqlglot` AST inspection** | A regex or keyword denylist | A denylist is bypassable by comments, casing, unicode escapes, nesting and statement stacking. Parsing is not. | A parser dependency, and refusing anything that will not parse — which occasionally rejects valid but exotic SQL |
 | Read-only enforcement | A dedicated **PostgreSQL role** *plus* validation | Validation alone | Defence in depth: even a total validator bypass cannot write | Two DSNs to manage and two connection pools |
 | Follow-up analysis | An **enumerated set of eight pandas operations** | Executing model-written Python in a sandbox | Removes an entire class of sandbox-escape risk permanently instead of defending against it forever. **No model-authored code executes anywhere in this system.** | Some analyses are not expressible and the agent must instead write different SQL — a real, documented limitation |
-| Charts | **Plotly** with kaleido | matplotlib | Interactive inside Streamlit and static PNG for reports, from one library | A heavier dependency |
+| Charts | **Plotly** server-side; inline SVG in the browser | matplotlib | One library produces the stored spec and the static PNG for the report; the page draws that spec as SVG, so it ships no chart library | The browser renderer is ours to maintain |
 | Metrics layer | **YAML definitions in the repository** | A prompt listing the formulas | Versioned, reviewable, diffable and testable; a prompt is none of those | Two of twelve metrics do not fit the template and carry their own statement under `shape: custom` |
 | Dataset | **Olist Brazilian e-commerce** (public) | Synthetic generated data | Real messiness — cancellations, delivery delays, category-mix shifts — gives the diagnostic questions genuine confounds to disentangle | A download step, mitigated by a committed fixture subset and a synthetic fallback |
-| Interface | **Streamlit** | A React single-page application | The deliverable is analytical behaviour and traceability, not front-end engineering; Streamlit shows a trace and approval controls in far less code | Less layout control |
+| Interface | **Hand-written HTML/CSS/JS, served by the API** | Streamlit (used first, then replaced); a React SPA | A widget toolkit owns its own markup, so a specified design can only be approximated with CSS layered over it — three rounds of that were spent before the layer was replaced. A React SPA would add a build step and a second deployable for a page this size. Plain files on the same origin give full control and keep the deployment one process | The interface is now ours to write, including the chart renderer |
 
 ### 6.1 Model configuration
 
@@ -1004,27 +1005,48 @@ readiness rather than serving unsafely.
 
 ## 17. The analyst interface
 
-`ui/streamlit_app.py`. It talks **only** to the API — there is no database access from the UI at
-all.
+`src/analyst_agent/api/static/` — `index.html`, `app.css`, `app.js`, served by the API itself at
+`/app/`. It talks **only** to the `/v1` endpoints; there is no database access from the interface
+at all, and being on the same origin means there is no other host it could reach.
 
 | Element | Purpose |
 |---|---|
-| Question box with metric autocomplete from `/v1/metrics` | steers the user towards approved definitions before the agent has to |
-| Live step timeline from the SSE stream | an investigation takes minutes; silence reads as a hang |
-| Findings panel | each finding with its materiality |
+| Question box, with the approved-metric catalogue a click away | steers the user towards approved definitions before the agent has to |
+| Live status while a run is in flight | an investigation takes minutes; silence reads as a hang |
+| Key Takeaways panel | each finding, with material ones marked as needing an explanation |
+| Trend and Breakdown panels | the agent's own charts, each labelled with the `query_id` it came from |
 | Hypothesis panel | supported versus refuted, side by side, with the reasoning |
-| Charts and tables | rendered from the API payload |
-| **"Show the evidence" drawer** | each claim → its SQL, guard verdict, row count, metric definition version |
+| **Evidence & Queries footer → View SQL & Data** | each claim → its SQL, guard verdict, row count, metric definition version, and every query the guard *refused* |
 | Pending-approval banner | the statement, the reason, the estimated cost, and approve/reject buttons |
-| Run history | previous questions and their outcomes |
+| Recent Analyses, Saved, Reports | previous questions and their outcomes |
 
-The evidence drawer is the interface's reason for existing. A confident paragraph with a
-one-click path to the SQL behind it is a different product from the same paragraph alone.
+The evidence path is the interface's reason for existing. A confident paragraph with a one-click
+route to the SQL behind it is a different product from the same paragraph alone.
 
-The UI is tested with Streamlit's `AppTest` harness against a patched API client, which required a
-specific accommodation: `AppTest` re-executes the script in a fresh namespace, so the test patches
-the injected `AnalystApi` dependency and clears `st.cache_resource` and `st.cache_data` between
-runs.
+### 17.1 Why it is not a widget toolkit
+
+The first implementation was Streamlit, chosen so the interface would cost little code. It was
+replaced, and the reason is worth recording because it is a general one: **a widget toolkit owns
+its own markup.** A Streamlit button label is text, the sidebar's DOM belongs to the framework,
+and a card is a `<div>` the framework decides where to put. Reproducing a specified layout on top
+of that means layering CSS over someone else's structure, and each round got closer without ever
+being right. Three rounds went that way before the layer was replaced rather than patched again.
+
+Plain files on the same origin cost more lines and buy exact control: the sidebar, the icon set,
+the card geometry and the chart panels are all ours. The deployment got simpler too — one process
+serving both the API and the page, rather than two containers and a base URL between them.
+
+### 17.2 Charts without a chart library
+
+The page draws the stored Plotly spec as **inline SVG** — an area chart with its own grid and
+axis labels, and a ring whose share sits in the legend beside each label. No CDN, no bundle, no
+build step.
+
+The important consequence is not the page weight. `app.js` **never picks a colour for data**: the
+series colours arrive inside the spec, chosen server-side from the validated palette. A renderer
+that invented its own colours would quietly break the rule that a colour follows the entity
+rather than the context it is viewed in — the same category would change hue between the report
+PNG and the screen. A test asserts the page requests nothing from a third party.
 
 ---
 
@@ -1032,7 +1054,7 @@ runs.
 
 ### 18.1 Composition
 
-**473 tests** across 22 modules (4,867 lines of test code against 9,605 lines of source).
+**533 tests** across 23 modules.
 
 | Suite | Focus |
 |---|---|
@@ -1151,10 +1173,10 @@ docker compose
 │          healthcheck: pg_isready
 ├── seed   one-shot        loads the dataset into `analytics`, then exits 0
 │          depends_on: db healthy
-├── api    uvicorn         analyst_agent.api.main:app, port 8000
-│          depends_on: db healthy, seed service_completed_successfully
-│          healthcheck: GET /readyz
-└── ui     streamlit       port 8501, depends_on: api healthy
+└── api    uvicorn         analyst_agent.api.main:app, port 8000
+           serves the /v1 endpoints *and* the interface at /app/
+           depends_on: db healthy, seed service_completed_successfully
+           healthcheck: GET /readyz
 ```
 
 The image is **multi-stage and runs as a non-root user**. Every published port is parameterised
@@ -1504,7 +1526,7 @@ AI-Analyst-Agent/
 │   ├── metrics/                     registry.py · loader.py · definitions/*.yaml (12)
 │   ├── db/                          engine.py · repository.py · models.py
 │   ├── observability/               logging.py · trace.py · audit.py
-│   └── ui/                          streamlit_app.py · components.py · api_client.py
+│   └── api/static/                  index.html · app.css · app.js (the interface)
 ├── db/
 │   ├── init/sql/                    01_roles.sql · 02_schema.sql · 03_grants.sql
 │   ├── migrations/                  001_agent_state · 002_inconclusive · 003_approved_verdict
@@ -1584,7 +1606,7 @@ And the brief's own definition of "production ready":
 | `feat(agent)` | 8 — multi-hypothesis generation, falsification, reconciliation · `v0.4` |
 | `feat(api)` | 9 — questions, run status, trace, approvals, SSE |
 | `feat(approvals)` | 10 — human-in-the-loop gates with durable pause and resume · `v0.5` |
-| `feat(ui)` | 11 — Streamlit interface with evidence drawer and approval controls |
+| `feat(ui)` | 11 — analyst interface with evidence drawer and approval controls |
 | `test(evals)` | 12 — 32-question suite, three graders, runner · `v0.6-evals` |
 | `build(ci)` | 13 — Dockerised stack, CI pipeline, README · `v0.7-deployable` |
 | `docs(report)` | 14 — final technical report, completed progress log · `v1.0` |
@@ -1616,7 +1638,8 @@ And the brief's own definition of "production ready":
 - `sqlglot` documentation — SQL parsing and AST traversal
 - PostgreSQL documentation — roles and privileges, `default_transaction_read_only`,
   `statement_timeout`, `EXPLAIN`, `pg_constraint`
-- FastAPI, Streamlit, Plotly, pandas, pydantic-settings, structlog documentation
+- FastAPI, Plotly, pandas, pydantic-settings, structlog documentation
+- MDN Web Docs — SVG paths and arcs, for the chart renderer in `app.js`
 
 ---
 
