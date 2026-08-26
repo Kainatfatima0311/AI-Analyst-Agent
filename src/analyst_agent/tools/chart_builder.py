@@ -28,11 +28,23 @@ from analyst_agent.db import repository as repo
 from analyst_agent.observability.logging import get_logger
 from analyst_agent.tools.base import Tool, ToolResult
 from analyst_agent.tools.frames import FrameNotAvailableError, get_store
-from analyst_agent.tools.palette import MAX_SERIES, MAX_SERIES_ALL_PAIRS, OTHER_LABEL, theme
+from analyst_agent.tools.palette import (
+    MAX_SERIES,
+    MAX_SERIES_ALL_PAIRS,
+    OTHER_COLOUR,
+    OTHER_LABEL,
+    theme,
+)
 
 log = get_logger(__name__)
 
-ChartType = Literal["line", "bar", "grouped_bar", "stacked_bar", "area", "scatter"]
+ChartType = Literal[
+    "line", "bar", "grouped_bar", "stacked_bar", "area", "scatter", "donut"
+]
+
+# Part-to-whole. Every slice touches two others, so the ring carries a surface gap and the
+# legend carries the label *and* the share - identity is never left to the colour alone.
+PART_TO_WHOLE_FORMS = {"donut"}
 
 # Forms where every series is compared against every other, not just its neighbour.
 ALL_PAIRS_FORMS = {"scatter"}
@@ -46,7 +58,8 @@ class ChartBuilderInput(BaseModel):
         description=(
             "line or area for a value over time; bar for magnitude across categories; "
             "grouped_bar or stacked_bar to add a second dimension; scatter for the "
-            "relationship between two numeric columns."
+            "relationship between two numeric columns; donut for how one total splits "
+            "between a handful of categories."
         )
     )
     x: str = Field(description="Column for the horizontal axis - the time or category column.")
@@ -76,6 +89,11 @@ measure on a second axis is refused.
 Series colours are assigned in a fixed order. Past eight series the smallest fold into 'Other'
 and the summary tells you so - do not treat a folded chart as showing every category. Scatter
 caps at three series.
+
+donut shows how one total divides between categories: pass the category column as x and the
+measure as y, and leave series null. Each slice's share appears in the legend beside its label.
+Use it only for a genuine part-to-whole - a handful of shares of one total - not to compare
+independent quantities, and never with a measure that can go negative.
 
 If the columns are not suitable - a text column on the y axis, a scatter against a category -
 this refuses and suggests a chart type that fits.
@@ -120,6 +138,15 @@ this refuses and suggests a chart type that fits.
                 guidance="Pick a numeric column for y, or aggregate first with python_analysis.",
             )
 
+        if payload.chart_type == "donut" and (work[payload.y] < 0).any():
+            # A share of a total is meaningless once a part is negative - the slices would not
+            # sum to the whole, and a reader has no way to see that from the picture.
+            return ToolResult.refuse(
+                f"{payload.y!r} contains negative values, so it cannot be shown as a share "
+                "of a total",
+                guidance="Use bar, which can show a negative magnitude honestly.",
+            )
+
         if payload.chart_type == "scatter":
             work[payload.x] = pd.to_numeric(work[payload.x], errors="coerce")
             if work[payload.x].notna().sum() == 0:
@@ -127,6 +154,9 @@ this refuses and suggests a chart type that fits.
                     f"scatter needs a numeric x axis, and {payload.x!r} is categorical",
                     guidance="Use bar for a category on the x axis.",
                 )
+
+        if payload.chart_type == "donut":
+            return self._deliver_donut(payload, work, run_id, query_uuid)
 
         groups, folded = self._series(work, payload)
         cap = MAX_SERIES_ALL_PAIRS if payload.chart_type in ALL_PAIRS_FORMS else MAX_SERIES
@@ -210,6 +240,115 @@ this refuses and suggests a chart type that fits.
         return groups, len(folded_names)
 
     # --- figure ----------------------------------------------------------
+
+    def _deliver_donut(
+        self,
+        payload: ChartBuilderInput,
+        work: pd.DataFrame,
+        run_id: uuid.UUID,
+        query_uuid: uuid.UUID,
+    ) -> ToolResult:
+        """Record a part-to-whole chart and report what it does and does not show."""
+        totals = (
+            work.groupby(payload.x, dropna=False)[payload.y].sum().sort_values(ascending=False)
+        )
+        folded = max(0, len(totals) - MAX_SERIES)
+        figure = self._donut(payload, work)
+        chart_id = repo.record_chart(
+            run_id=run_id,
+            query_id=query_uuid,
+            chart_type=payload.chart_type,
+            spec=_spec(figure),
+            title=payload.title,
+            png=self._png(figure),
+        )
+
+        shown = min(len(totals), MAX_SERIES)
+        summary = f"donut of {payload.y} split by {payload.x} ({shown} slices)"
+        if folded:
+            summary += (
+                f". Note: {folded} smaller categories were folded into '{OTHER_LABEL}' - the "
+                "chart shows the largest, not every category"
+            )
+        return ToolResult(
+            ok=True,
+            summary=summary,
+            data={
+                "chart_id": str(chart_id),
+                "query_id": payload.query_id,
+                "chart_type": payload.chart_type,
+                "title": payload.title,
+                "slices": [str(name) for name in totals.index[:MAX_SERIES]],
+                "series_folded": folded,
+                "points": len(work),
+            },
+            audit={"chart_id": str(chart_id), "slices": shown, "folded": folded},
+        )
+
+    def _donut(self, payload: ChartBuilderInput, work: pd.DataFrame) -> go.Figure:
+        """A total split between categories.
+
+        The legend carries ``label - share%`` rather than the slices carrying numbers: a ring of
+        percentages is unreadable at small sizes, and putting the share in the legend means the
+        chart survives being screenshotted, printed in grey, or read by someone who cannot
+        separate two of the hues.
+        """
+        light = theme("light")
+        totals = (
+            work.groupby(payload.x, dropna=False)[payload.y].sum().sort_values(ascending=False)
+        )
+        if len(totals) > MAX_SERIES:
+            kept = totals.iloc[:MAX_SERIES]
+            folded_total = float(totals.iloc[MAX_SERIES:].sum())
+            names = [str(name) for name in kept.index] + [OTHER_LABEL]
+            values = [float(v) for v in kept] + [folded_total]
+        else:
+            names = [str(name) for name in totals.index]
+            values = [float(v) for v in totals]
+
+        whole = sum(values) or 1.0
+        labels = [f"{name} - {value / whole * 100:.1f}%" for name, value in zip(names, values, strict=True)]
+        colours = [
+            light.colour(index) if name != OTHER_LABEL else OTHER_COLOUR["light"]
+            for index, name in enumerate(names)
+        ]
+
+        figure = go.Figure(
+            go.Pie(
+                labels=labels,
+                values=values,
+                hole=0.62,
+                sort=False,
+                direction="clockwise",
+                textinfo="none",
+                marker={
+                    "colors": colours,
+                    # The 2px surface ring: adjacent slices read as separate marks.
+                    "line": {"color": light.surface, "width": 2},
+                },
+                hovertemplate="%{label}<br>%{value:,.2f}<extra></extra>",
+            )
+        )
+        figure.update_layout(
+            template="plotly_white",
+            title={"text": payload.title, "font": {"size": 16, "color": light.text_primary}},
+            paper_bgcolor=light.surface,
+            plot_bgcolor=light.surface,
+            font={"color": light.text_secondary, "size": 12},
+            showlegend=True,
+            legend={"orientation": "v", "yanchor": "middle", "y": 0.5, "x": 1.0},
+            margin={"l": 16, "r": 16, "t": 64, "b": 24},
+            meta={
+                "dark_theme": {
+                    "surface": theme("dark").surface,
+                    "text_primary": theme("dark").text_primary,
+                    "text_secondary": theme("dark").text_secondary,
+                    "series": [theme("dark").colour(i) for i in range(len(names))],
+                },
+                "query_id": payload.query_id,
+            },
+        )
+        return figure
 
     def _figure(
         self, payload: ChartBuilderInput, groups: list[tuple[str, pd.DataFrame]]

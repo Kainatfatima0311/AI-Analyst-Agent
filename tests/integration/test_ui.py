@@ -260,7 +260,8 @@ def test_a_finished_run_renders_without_error(app) -> None:
 
 
 def test_the_conclusion_and_its_confidence_are_shown(app) -> None:
-    test = app(run_id=RUN_ID).run()
+    """One click from the summary card, which is where the design puts it."""
+    test = _open_details(app(run_id=RUN_ID).run())
     page = " ".join(m.value for m in test.markdown)
     assert "Revenue fell 32%" in page
     assert "Medium confidence" in page, "confidence is stated, not implied"
@@ -268,14 +269,14 @@ def test_the_conclusion_and_its_confidence_are_shown(app) -> None:
 
 def test_what_was_ruled_out_appears_beside_the_answer(app) -> None:
     """Naming what was disproved is how a reader knows the agent looked."""
-    test = app(run_id=RUN_ID).run()
+    test = _open_details(app(run_id=RUN_ID).run())
     page = " ".join(m.value for m in test.markdown)
     assert "Ruled out" in page
     assert "Delivery delays" in page
 
 
 def test_both_hypotheses_are_shown_with_their_verdicts(app) -> None:
-    test = app(run_id=RUN_ID).run()
+    test = _open_details(app(run_id=RUN_ID).run())
     page = " ".join(m.value for m in test.markdown)
     assert "premium category share collapsed" in page
     assert "Supported" in page
@@ -284,14 +285,14 @@ def test_both_hypotheses_are_shown_with_their_verdicts(app) -> None:
 
 def test_the_sql_behind_the_answer_is_reachable(app) -> None:
     """A conclusion is worth what the evidence you can reach from it is worth."""
-    test = app(run_id=RUN_ID).run()
+    test = _open_details(app(run_id=RUN_ID).run())
     code = " ".join(block.value for block in test.code)
     assert "v_order_revenue" in code
 
 
 def test_a_blocked_query_is_visible_not_hidden(app) -> None:
     """What the agent tried is usually what a reviewer wants to know."""
-    test = app(run_id=RUN_ID).run()
+    test = _open_details(app(run_id=RUN_ID).run())
     code = " ".join(block.value for block in test.code)
     assert "DROP TABLE analytics.orders" in code
     page = " ".join(m.value for m in test.markdown)
@@ -489,6 +490,19 @@ def test_an_unparseable_timestamp_still_shows_something() -> None:
 # page rendered, and then clicking a suggestion card raised. Rendering a page is not using it.
 
 
+def _open_details(test: Any) -> Any:
+    """Open the full account under the summary card.
+
+    The design puts the conclusion, the hypotheses and the SQL behind **View Details** rather
+    than on the landing view. Reachable in one click is the claim this project makes; open by
+    default is not, so the tests click through rather than asserting the collapsed state away.
+    """
+    for button in test.button:
+        if str(button.key or "").startswith("details-"):
+            return button.click().run()
+    raise AssertionError("no View Details button on this run")
+
+
 def _click_key(test: Any, key: str) -> Any:
     """Click by widget key, and re-run.
 
@@ -541,7 +555,7 @@ def test_the_nav_moves_between_pages(app) -> None:
 
 def test_the_theme_toggle_repaints_without_error(app) -> None:
     test = app().run()
-    test = _click(test, "Dark")
+    test = _click_key(test, "theme-toggle")
     assert not test.exception
     assert test.session_state["dark"] is True
     assert theme.CHROME["dark"].surface in " ".join(m.value for m in test.markdown)

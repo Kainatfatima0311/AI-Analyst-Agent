@@ -28,12 +28,22 @@ from analyst_agent.ui.theme import (
 
 NAV: list[tuple[str, str, str]] = [
     ("ask", "⌂", "Ask Question"),
-    ("dashboard", "▤", "Dashboard"),
+    ("dashboard", "⊞", "Dashboard"),
     ("saved", "❏", "Saved Analyses"),
-    ("metrics", "◈", "Metrics Catalog"),
+    ("metrics", "≣", "Metrics Catalog"),
     ("schema", "⌕", "Data Explorer"),
+    ("reports", "▤", "Reports"),
     ("settings", "⚙", "Settings"),
 ]
+
+# The four tints behind the suggestion glyphs. Chrome pastels at 12% alpha — light enough that
+# they read as decoration rather than as the series identity a chart assigns.
+TILE_TINTS: tuple[tuple[str, str], ...] = (
+    ("#1f7a4d", "rgba(31, 122, 77, .12)"),
+    ("#6c5ce7", "rgba(108, 92, 231, .12)"),
+    ("#c07000", "rgba(192, 112, 0, .12)"),
+    ("#2a78d6", "rgba(42, 120, 214, .12)"),
+)
 
 
 # --- sidebar ------------------------------------------------------------------
@@ -136,11 +146,15 @@ def char_counter(used: int, limit: int) -> None:
     )
 
 
-def suggestion(question: str, glyph: str) -> None:
+def tile(index: int, glyph: str) -> str:
+    """One coloured glyph tile, cycling the four chrome tints."""
+    ink, wash = TILE_TINTS[index % len(TILE_TINTS)]
+    return f'<div class="ico" style="background:{wash};color:{ink}">{glyph}</div>'
+
+
+def suggestion(index: int, glyph: str, question: str) -> None:
     st.markdown(
-        f'<div class="suggest">'
-        f'<div class="ico" style="background:var(--accent-soft);color:var(--accent)">{glyph}</div>'
-        f'<div class="q">{question}</div></div>',
+        f'<div class="suggest">{tile(index, glyph)}<div class="q">{question}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -153,6 +167,31 @@ def recent_card(run: dict[str, Any], current: bool) -> None:
         f'<div class="q">{question}</div>'
         f'<div class="meta"><span class="when">{ago(run.get("created_at"))}</span>'
         f'{status_chip(run.get("status"))}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def sidebar_art() -> None:
+    """The decorative panel at the foot of the nav.
+
+    Inline SVG rather than an image file: it inherits the accent, costs no request, and cannot
+    fail to load. Marked ``aria-hidden`` because it says nothing a screen reader needs.
+    """
+    st.markdown(
+        '<div class="side-art" aria-hidden="true">'
+        '<svg viewBox="0 0 200 140" width="100%" height="120">'
+        '<defs><linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">'
+        '<stop offset="0" stop-color="#8f7cff" stop-opacity=".95"/>'
+        '<stop offset="1" stop-color="#5a49dd" stop-opacity=".55"/>'
+        "</linearGradient></defs>"
+        '<path d="M22 96 L60 62 L96 78 L134 34 L172 20" fill="none" stroke="#a99bff"'
+        ' stroke-width="2.5" stroke-linecap="round" opacity=".75"/>'
+        '<circle cx="60" cy="62" r="4" fill="#c9c0ff"/>'
+        '<circle cx="134" cy="34" r="4" fill="#c9c0ff"/>'
+        '<rect x="34" y="92" width="26" height="34" rx="5" fill="url(#bar)"/>'
+        '<rect x="72" y="76" width="26" height="50" rx="5" fill="url(#bar)"/>'
+        '<rect x="110" y="58" width="26" height="68" rx="5" fill="url(#bar)"/>'
+        "</svg></div>",
         unsafe_allow_html=True,
     )
 
@@ -206,22 +245,22 @@ def takeaways(run: dict[str, Any]) -> None:
     findings_list = run.get("findings") or []
     if not findings_list:
         st.markdown(
-            '<div class="takeaway"><span class="ico">·</span>'
+            '<div class="takeaway"><div class="ico">·</div>'
             '<span class="t">No separate findings were recorded for this question.</span>'
             "</div>",
             unsafe_allow_html=True,
         )
         return
 
-    for finding in findings_list[:5]:
+    for index, finding in enumerate(findings_list[:5]):
         material = finding.get("material")
         tested = [
             h for h in finding.get("hypotheses", [])
             if h.get("status") in ("supported", "refuted")
         ]
-        # An icon plus a border tone, never colour alone: a material finding has to be legible in
+        # A glyph and a border tone, never colour alone: a material finding has to be legible in
         # a screenshot and to a reader who cannot separate the hues.
-        klass, icon = ("material", "!") if material else ("good", "✓")
+        klass, glyph = ("material", "!") if material else ("good", "✓")
         note = ""
         if material:
             note = (
@@ -229,7 +268,7 @@ def takeaways(run: dict[str, Any]) -> None:
                 f'explanation{"s" if len(tested) != 1 else ""} tested</span>'
             )
         st.markdown(
-            f'<div class="takeaway {klass}"><span class="ico">{icon}</span>'
+            f'<div class="takeaway {klass}">{tile(index, glyph)}'
             f'<span class="t">{finding["statement"]}{note}</span></div>',
             unsafe_allow_html=True,
         )
@@ -244,37 +283,106 @@ def chart_panel(
     surface and the ink are re-themed. Repainting series by UI mode would break the rule that
     colour follows the entity rather than the context it is viewed in.
     """
-    st.markdown(f'<div class="panel-title">{title}</div>', unsafe_allow_html=True)
-    if index >= len(charts_data):
+    with st.container(border=True):
+        chart = charts_data[index] if index < len(charts_data) else None
+        heading = chart["title"] if chart and chart.get("title") else title
         st.markdown(
-            '<div class="takeaway"><span class="ico">·</span><span class="t">'
-            "No chart for this answer — the agent judged a figure would not add to the numbers. "
-            "The values are in the evidence below.</span></div>",
+            f'<div class="panel-title">{heading}'
+            f'<span class="hint" title="Built by the agent from the query below">ⓘ</span></div>',
             unsafe_allow_html=True,
         )
-        return
+        if chart is None:
+            st.markdown(
+                '<div class="blank">No chart here — the agent judged a figure would not add to '
+                "the numbers. The values are in the evidence below.</div>",
+                unsafe_allow_html=True,
+            )
+            return
 
-    chart = charts_data[index]
-    figure = go.Figure(chart["spec"])
-    figure.update_layout(**chart_layout(mode), height=290, showlegend=len(figure.data) > 1)
-    st.plotly_chart(figure, width="stretch", key=f"chart-{chart.get('chart_id', index)}")
-    st.markdown(
-        f'<div class="evidence"><div class="meta">from query {chart["query_id"]}</div></div>',
-        unsafe_allow_html=True,
+        figure = go.Figure(chart["spec"])
+        is_pie = any(getattr(trace, "type", "") == "pie" for trace in figure.data)
+        figure.update_layout(
+            **_panel_layout(mode, is_pie),
+            height=300,
+            showlegend=is_pie or len(figure.data) > 1,
+        )
+        st.plotly_chart(figure, width="stretch", key=f"chart-{chart.get('chart_id', index)}")
+        st.markdown(
+            f'<div class="evidence"><div class="meta">from query {chart["query_id"]}</div></div>',
+            unsafe_allow_html=True,
+        )
+
+
+def _panel_layout(mode: Mode, is_pie: bool) -> dict[str, Any]:
+    """Panel-sized layout. A pie has no axes, and axis overrides on one are ignored noise."""
+    layout = dict(chart_layout(mode))
+    layout["title"] = {"text": ""}  # the panel heading already says what this is
+    layout["margin"] = (
+        {"l": 8, "r": 8, "t": 8, "b": 8}
+        if is_pie
+        else {"l": 52, "r": 12, "t": 12, "b": 34}
     )
+    if is_pie:
+        layout.pop("xaxis", None)
+        layout.pop("yaxis", None)
+        layout["legend"] = {**layout.get("legend", {}), "orientation": "v", "x": 1.0, "y": 0.5}
+    return layout
 
 
-def evidence_footer(run: dict[str, Any], trace: dict[str, Any]) -> None:
+def result_actions(run_id: str) -> None:
+    """Share, Save, View Details — the three the design puts on a finished answer.
+
+    Each does what its label says and nothing more. Share reveals the link to this run rather
+    than posting it anywhere; Save is a bookmark in this session. Neither publishes, because
+    publishing an answer is approval point 4 and that gate has no implementation behind it — a
+    button that quietly did it would be the worst kind of shortcut.
+    """
+    share, save, details = st.columns([1, 1, 1.2])
+    with share:
+        if st.button("⤴ Share", key=f"share-{run_id}", width="stretch"):
+            st.session_state[f"share-open-{run_id}"] = not st.session_state.get(
+                f"share-open-{run_id}", False
+            )
+    with save:
+        saved: set[str] = st.session_state.setdefault("bookmarks", set())
+        if st.button(
+            "★ Saved" if run_id in saved else "☆ Save", key=f"save-{run_id}", width="stretch"
+        ):
+            saved.symmetric_difference_update({run_id})
+            st.rerun()
+    with details:
+        if st.button(
+            "▤ View Details", type="primary", key=f"details-{run_id}", width="stretch"
+        ):
+            st.session_state["details_open"] = not st.session_state.get("details_open", False)
+            st.rerun()
+
+
+def evidence_footer(run: dict[str, Any], trace: dict[str, Any]) -> bool:
+    """The line back to the SQL. Returns True when the reader asked to see it.
+
+    Blocked queries are counted here beside the executed ones. A footer that said "3 queries
+    executed" while the guard had refused two would be telling half the story, and the refused
+    half is usually the interesting one.
+    """
     executed = trace.get("summary", {}).get("queries_executed", 0)
     blocked = trace.get("summary", {}).get("queries_rejected", 0)
     label = f"{executed} quer{'y' if executed == 1 else 'ies'} executed"
     if blocked:
         label += f" · {blocked} blocked by the guard"
-    st.markdown(
-        f'<div class="evidence-foot"><span class="l">Evidence &amp; Queries</span>'
-        f'<span class="n">{label}</span></div>',
-        unsafe_allow_html=True,
-    )
+
+    left, right = st.columns([3.4, 1])
+    with left:
+        st.markdown(
+            f'<div class="evidence-foot"><span class="l">Evidence &amp; Queries</span>'
+            f'<span class="n">{label}</span></div>',
+            unsafe_allow_html=True,
+        )
+    with right:
+        run_id = run.get("run_id", "")
+        return bool(
+            st.button("≣ View SQL & Data", key=f"sql-{run_id}", width="stretch")
+        )
 
 
 # --- the answer, in full ------------------------------------------------------

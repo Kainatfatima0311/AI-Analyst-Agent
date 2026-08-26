@@ -582,3 +582,137 @@ def test_the_whole_chain_is_accounted_for_in_the_trace(
     assert len(trace["charts"]) == 1
     # Every tool call recorded a duration, so a slow step is visible in the trace.
     assert all(c["duration_ms"] is not None for c in trace["tool_calls"])
+
+# --- donut: part-to-whole ----------------------------------------------------
+
+
+@pytest.fixture
+def category_query(registry: ToolRegistry, run_id: uuid.UUID, seeded: None) -> str:
+    result = registry.invoke(
+        "sql_runner",
+        {
+            "sql": "SELECT p.product_category_name AS category, sum(oi.price) AS revenue "
+            "FROM analytics.order_items oi "
+            "JOIN analytics.products p ON p.product_id = oi.product_id "
+            "GROUP BY 1 ORDER BY 2 DESC",
+            "purpose": "revenue by category",
+            "row_limit": None,
+        },
+        run_id,
+    )
+    assert result.ok and not result.refused, result.summary
+    return str(result.data["query_id"])
+
+
+def test_a_donut_puts_each_share_in_the_legend_beside_its_label(
+    registry: ToolRegistry, run_id: uuid.UUID, category_query: str
+) -> None:
+    """A ring of percentages is unreadable small; the legend keeps the chart legible.
+
+    It also means identity survives a screenshot, a grey print, and a reader who cannot separate
+    two of the hues — the label carries it, not the colour.
+    """
+    result = registry.invoke(
+        "chart_builder",
+        {
+            "query_id": category_query,
+            "chart_type": "donut",
+            "x": "category",
+            "y": "revenue",
+            "series": None,
+            "title": "Where revenue comes from",
+        },
+        run_id,
+    )
+    assert result.ok and not result.refused, result.summary
+
+    charts = repo.get_trace(run_id)["charts"]
+    spec = charts[0]["spec"]
+    assert spec["data"][0]["type"] == "pie"
+    assert spec["data"][0]["hole"] > 0.5, "a donut, not a pie"
+    labels = spec["data"][0]["labels"]
+    assert all("%" in label for label in labels), "every slice states its share"
+    assert " - " in labels[0]
+    assert spec["layout"]["showlegend"] is True
+
+
+def test_a_donut_keeps_the_slices_in_size_order(
+    registry: ToolRegistry, run_id: uuid.UUID, category_query: str
+) -> None:
+    """Colour follows the entity, and the reading order follows magnitude."""
+    registry.invoke(
+        "chart_builder",
+        {
+            "query_id": category_query,
+            "chart_type": "donut",
+            "x": "category",
+            "y": "revenue",
+            "series": None,
+            "title": "Where revenue comes from",
+        },
+        run_id,
+    )
+    chart = repo.get_trace(run_id)["charts"][0]["spec"]["data"][0]
+    values, labels = list(chart["values"]), list(chart["labels"])
+
+    # The named slices run largest first, so slot 1 is the biggest category and a colour stays
+    # with the same entity. "Other" is last whatever it weighs: it is a remainder, not a
+    # category, and sorting it into the middle would invite reading it as one.
+    assert labels[-1].startswith("Other")
+    named = values[:-1]
+    assert named == sorted(named, reverse=True)
+
+
+def test_a_donut_folds_the_tail_and_reports_it(
+    registry: ToolRegistry, run_id: uuid.UUID, category_query: str
+) -> None:
+    """Ten categories, eight slots: the ninth and tenth become 'Other', and it is said aloud."""
+    result = registry.invoke(
+        "chart_builder",
+        {
+            "query_id": category_query,
+            "chart_type": "donut",
+            "x": "category",
+            "y": "revenue",
+            "series": None,
+            "title": "Where revenue comes from",
+        },
+        run_id,
+    )
+    assert result.data["series_folded"] == 2
+    assert "folded" in result.summary
+    labels = repo.get_trace(run_id)["charts"][0]["spec"]["data"][0]["labels"]
+    assert any(label.startswith("Other") for label in labels)
+
+
+def test_a_donut_refuses_a_measure_that_can_go_negative(
+    registry: ToolRegistry, run_id: uuid.UUID, seeded: None
+) -> None:
+    """Slices that do not sum to the whole are a lie the picture cannot show."""
+    result = registry.invoke(
+        "sql_runner",
+        {
+            "sql": "SELECT p.product_category_name AS category, "
+            "sum(oi.price) - 1000 * sum(oi.freight_value) AS margin "
+            "FROM analytics.order_items oi "
+            "JOIN analytics.products p ON p.product_id = oi.product_id GROUP BY 1",
+            "purpose": "a measure that can go negative",
+            "row_limit": None,
+        },
+        run_id,
+    )
+    chart = registry.invoke(
+        "chart_builder",
+        {
+            "query_id": str(result.data["query_id"]),
+            "chart_type": "donut",
+            "x": "category",
+            "y": "margin",
+            "series": None,
+            "title": "Margin by category",
+        },
+        run_id,
+    )
+    assert chart.refused
+    assert "negative" in chart.summary
+    assert "bar" in str(chart.data.get("guidance", "")).lower()

@@ -486,6 +486,66 @@ hr {{ border-color: var(--border); }}
 }}
 [class*="st-key-saved-"] .stButton > button {{ min-height: 3rem; }}
 
+/* The coloured glyph tile on a suggestion card. It cannot live in the label — a Streamlit button
+   label is text — so it is a ::before on the button, coloured by column position. Position, not
+   question: the tile is decoration, and tying a hue to a *question* would start to read as the
+   identity a chart's colours carry. */
+[class*="st-key-eg-"] .stButton > button::before {{
+  content: "▤";
+  flex: 0 0 30px; width: 30px; height: 30px; margin-right: .7rem;
+  display: grid; place-items: center;
+  border-radius: 9px; font-size: .95rem; line-height: 1;
+  background: var(--accent-soft); color: var(--accent);
+}}
+[data-testid="stHorizontalBlock"] > div:nth-child(1) [class*="st-key-eg-"] button::before {{
+  content: "▤"; background: rgba(31, 122, 77, .13); color: #1f7a4d;
+}}
+[data-testid="stHorizontalBlock"] > div:nth-child(2) [class*="st-key-eg-"] button::before {{
+  content: "◔"; background: rgba(108, 92, 231, .13); color: #6c5ce7;
+}}
+[data-testid="stHorizontalBlock"] > div:nth-child(3) [class*="st-key-eg-"] button::before {{
+  content: "◈"; background: rgba(192, 112, 0, .13); color: #c07000;
+}}
+[data-testid="stHorizontalBlock"] > div:nth-child(4) [class*="st-key-eg-"] button::before {{
+  content: "⌁"; background: rgba(42, 120, 214, .13); color: #2a78d6;
+}}
+[class*="st-key-suggest-next"] .stButton > button {{
+  min-height: 4.1rem; border-radius: var(--radius); padding: 0;
+  font-size: 1.1rem; color: var(--text-muted);
+}}
+
+/* A recent card is one surface: the button holds the question and the meta line is pulled up
+   into it, so the whole thing reads and clicks as a single card rather than a button with a
+   caption stuck underneath. */
+[class*="st-key-recent-"] .stButton > button {{
+  min-height: 4.4rem; align-items: flex-start; padding-bottom: 1.9rem;
+}}
+.recent-meta {{
+  display: flex; align-items: center; justify-content: space-between;
+  margin: -2.5rem .95rem 1rem; position: relative; pointer-events: none;
+}}
+.recent-meta .when {{ font-size: .76rem; color: var(--text-muted); }}
+.recent-current-anchor + div .stButton > button {{
+  border-color: rgba(108, 92, 231, .5); background: var(--accent-soft);
+}}
+
+/* Chart panels: a quieter surface inside the result card, so three panels read as three panels
+   rather than as three cards stacked on a card. */
+[data-testid="stVerticalBlockBorderWrapper"]
+  [data-testid="stVerticalBlockBorderWrapper"] {{
+  background: var(--sunken); box-shadow: none; padding: .85rem .9rem; margin-bottom: 0;
+}}
+.blank {{
+  font-size: .82rem; color: var(--text-muted); line-height: 1.45;
+  padding: 1.6rem .2rem; text-align: center;
+}}
+
+.side-art {{ margin-top: 1.4rem; opacity: .95; filter: drop-shadow(0 8px 24px rgba(108, 92, 231, .35)); }}
+[data-testid="stSidebar"] .stExpander {{
+  background: transparent; border: none !important; margin-top: -.35rem;
+}}
+[data-testid="stSidebar"] .stExpander summary {{ font-size: .74rem; color: {SIDEBAR_MUTED}; }}
+
 .stTextArea textarea, .stTextInput input {{
   background: var(--raised); border: 1px solid var(--border);
   border-radius: var(--radius-sm); color: var(--text); font-size: .92rem;

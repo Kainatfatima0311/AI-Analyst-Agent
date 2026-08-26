@@ -116,12 +116,18 @@ def sidebar() -> tuple[str, str]:
 
         ui.side_status(api().healthy())
         st.session_state.setdefault("who", "analyst@example.com")
-        who = st.text_input(
-            "Signed in as",
-            help="Recorded with any approval decision you make.",
-            key="who",
-        )
+        who = str(st.session_state["who"])
         ui.side_user(who)
+        # The name is a card, not a field: it is only edited when someone actually changes it,
+        # and an always-open text input in the nav reads as something needing attention.
+        with st.expander("Change", expanded=False):
+            st.text_input(
+                "Signed in as",
+                help="Recorded with any approval decision you make.",
+                key="who",
+                label_visibility="collapsed",
+            )
+        ui.sidebar_art()
 
     return page, who
 
@@ -136,7 +142,7 @@ def header(title: str, subtitle: str) -> None:
     with right:
         theme_col, new_col = st.columns([1, 1.25])
         with theme_col:
-            label = "☀ Light" if st.session_state.get("dark") else "☾ Dark"
+            label = "☀ Theme" if st.session_state.get("dark") else "☼ Theme"
             if st.button(label, width="stretch", key="theme-toggle"):
                 st.session_state["dark"] = not st.session_state.get("dark")
                 st.rerun()
@@ -212,9 +218,12 @@ def suggestions() -> None:
     shown = EXAMPLES[start : start + VISIBLE_SUGGESTIONS]
 
     columns = st.columns([*([1] * VISIBLE_SUGGESTIONS), 0.16])
-    for column, (glyph, example) in zip(columns, shown, strict=False):
+    for column, (_glyph, example) in zip(columns, shown, strict=False):
         with column:
-            if st.button(f"{glyph}   {example}", key=f"eg-{example}", width="stretch"):
+            # The label is the question alone. The coloured glyph tile comes from CSS on the
+            # column position, because a Streamlit button label cannot carry markup and a
+            # separate control beside the card would break "the whole card is the target".
+            if st.button(example, key=f"eg-{example}", width="stretch"):
                 st.session_state["pending_question"] = example
                 st.rerun()
     with columns[-1]:
@@ -241,20 +250,22 @@ def recent_strip() -> None:
         with column:
             label = run["question"]
             label = label if len(label) <= 52 else label[:51] + "…"
+            # One card, not a button with a strip under it: the meta line is styled to sit
+            # inside the button's own surface, so the whole thing reads and clicks as one card.
+            state = "recent-current" if run["run_id"] == current else "recent-card"
+            st.markdown(f'<div class="{state}-anchor"></div>', unsafe_allow_html=True)
             if st.button(label, key=f"recent-{run['run_id']}", width="stretch"):
                 open_run(run["run_id"])
             st.markdown(
-                f'<div class="recent{" current" if run["run_id"] == current else ""}" '
-                'style="margin-top:-.55rem;border-top-left-radius:0;border-top-right-radius:0">'
-                f'<div class="meta" style="margin-top:0">'
+                f'<div class="recent-meta">'
                 f'<span class="when">{ui.ago(run.get("created_at"))}</span>'
-                f'{status_chip(run.get("status"))}</div></div>',
+                f'{status_chip(run.get("status"))}</div>',
                 unsafe_allow_html=True,
             )
 
 
 def ask_page(who: str) -> None:
-    header("Hello, Analyst 👋", "Ask a business question. Get answers you can check.")
+    header("Hello, Analyst 👋", "Ask a business question. Get data-backed insights.")
     ask_card()
     suggestions()
     recent_strip()
@@ -285,7 +296,15 @@ def result_card(run_id: str, who: str) -> None:
     status = run["status"]
 
     with st.container(border=True):
-        ui.result_head(run)
+        title, actions = st.columns([2.6, 1.35])
+        with title:
+            ui.result_head(run)
+        with actions:
+            if run.get("answer"):
+                ui.result_actions(run_id)
+        if st.session_state.get(f"share-open-{run_id}"):
+            st.code(f"{api().base_url}/v1/runs/{run_id}", language="text")
+            st.caption("The run, its trace and every query behind it. Nothing was published.")
 
         if run.get("pending_approvals"):
             st.markdown(
@@ -321,7 +340,9 @@ def result_card(run_id: str, who: str) -> None:
                 ui.chart_panel(run.get("charts", []), 0, "Trend", mode())
             with right:
                 ui.chart_panel(run.get("charts", []), 1, "Breakdown", mode())
-            ui.evidence_footer(run, trace)
+            if ui.evidence_footer(run, trace):
+                st.session_state["details_open"] = True
+                st.rerun()
         else:
             if status in LIVE_STATUSES:
                 st.markdown(
@@ -334,7 +355,12 @@ def result_card(run_id: str, who: str) -> None:
                 st.error(f"{run['error'].get('type')}: {run['error'].get('message')}")
             ui.timeline(trace.get("steps", []))
 
-    if run.get("answer"):
+    # The card above is the summary; this is the full account, opened by View Details or by the
+    # evidence line. It starts closed so the page reads as the design does, and one click away so
+    # the SQL is never more than that.
+    if run.get("answer") and not st.session_state.get("details_open"):
+        st.caption("Open **View Details** for the conclusion, the hypotheses and every query.")
+    elif run.get("answer"):
         answer_tab, working_tab = st.tabs(["Answer", "How it got there"])
         with answer_tab:
             ui.conclusion(run["answer"])
@@ -603,6 +629,53 @@ def settings_page() -> None:
         )
 
 
+# --- reports ------------------------------------------------------------------
+
+
+def reports_page() -> None:
+    """Finished answers, as something a person could hand to someone else.
+
+    Deliberately read-only: exporting or publishing a report is approval point 4, and that gate
+    has no implementation behind it. A page offering a Publish button that quietly skipped the
+    gate would be worse than one that does not offer it.
+    """
+    header("Reports", "Finished answers, with the evidence each one rests on.")
+    runs = [r for r in recent_runs(limit=40) if r.get("status") == "completed"]
+    if not runs:
+        st.info("No completed analyses yet.")
+        return
+
+    st.caption(f"{len(runs)} completed. Select one to read it in full.")
+    labels = {f"{r['question']}  ·  {ui.ago(r.get('created_at'))}": r["run_id"] for r in runs}
+    chosen = st.selectbox("Report", list(labels), label_visibility="collapsed")
+    run_id = labels[chosen]
+
+    try:
+        run = api().run(run_id)
+        trace = api().trace(run_id)
+    except ApiError as exc:
+        st.error(f"Could not load that run: {exc.detail}")
+        return
+
+    with st.container(border=True):
+        ui.result_head(run)
+        ui.stat_row(
+            [
+                ("Queries run", trace["summary"].get("queries_executed", 0)),
+                ("Blocked", trace["summary"].get("queries_rejected", 0)),
+                ("Hypotheses refuted", trace["summary"].get("hypotheses_refuted", 0)),
+                ("Tokens", f"{run.get('tokens_in', 0) + run.get('tokens_out', 0):,}"),
+            ]
+        )
+        if run.get("answer"):
+            ui.conclusion(run["answer"])
+            ui.charts(run.get("charts", []), mode())
+            ui.findings(run.get("findings", []))
+            ui.evidence_drawer(run["answer"])
+        else:
+            st.caption("This run produced no answer.")
+
+
 # --- routing ------------------------------------------------------------------
 
 PAGES = {
@@ -611,6 +684,7 @@ PAGES = {
     "saved": lambda who: saved_page(),
     "metrics": lambda who: metrics_page(),
     "schema": lambda who: schema_page(),
+    "reports": lambda who: reports_page(),
     "settings": lambda who: settings_page(),
 }
 
