@@ -283,6 +283,7 @@ def record_sql_audit(
     estimated_cost: float | None = None,
     step_id: uuid.UUID | None = None,
     tool_call_id: uuid.UUID | None = None,
+    parameters: dict[str, str] | None = None,
 ) -> uuid.UUID:
     """Record a query *before* it runs, whatever the verdict.
 
@@ -294,7 +295,7 @@ def record_sql_audit(
         cur.execute(
             "INSERT INTO agent.sql_audit (query_id, run_id, step_id, tool_call_id, purpose, "
             "sql_text, rewritten_sql, verdict, reasons, referenced_objects, sensitive_columns, "
-            "estimated_cost) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "estimated_cost, parameters) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 query_id,
                 run_id,
@@ -308,6 +309,10 @@ def record_sql_audit(
                 Jsonb(referenced_objects or []),
                 Jsonb(sensitive_columns or []),
                 estimated_cost,
+                # Recorded with the statement so a parameterised query can be reproduced exactly.
+                # Values only - date windows and dimension filters; a query never carries a
+                # credential.
+                Jsonb(parameters) if parameters else None,
             ),
         )
     log.info(

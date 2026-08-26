@@ -92,8 +92,8 @@ class FrameStore:
 
         with rw_conn() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT purpose, rewritten_sql, sql_text, verdict, executed, truncated "
-                "FROM agent.sql_audit WHERE query_id = %s",
+                "SELECT purpose, rewritten_sql, sql_text, verdict, executed, truncated, "
+                "parameters FROM agent.sql_audit WHERE query_id = %s",
                 (query_id,),
             )
             record = cur.fetchone()
@@ -108,8 +108,17 @@ class FrameStore:
             )
 
         statement = record["rewritten_sql"] or record["sql_text"]
+        # Bound, not interpolated - the same way the statement ran the first time. A statement
+        # holding placeholders with no recorded parameters cannot be reproduced, and saying so
+        # beats a syntax error from deep inside the driver.
+        parameters = record.get("parameters")
+        if parameters is None and "%(" in statement:
+            raise FrameNotAvailableError(
+                f"query {query_id} was parameterised and its values were not recorded, so it "
+                "cannot be reproduced. Queries run after migration 006 store them."
+            )
         with ro_conn() as conn, conn.cursor() as cur:
-            cur.execute(statement)
+            cur.execute(statement, parameters or None)
             rows = cur.fetchall()
 
         frame = pd.DataFrame(rows)

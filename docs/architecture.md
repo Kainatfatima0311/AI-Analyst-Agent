@@ -20,6 +20,7 @@ runtime flow of a single question, the data model, and the deployment topology.
 │   routes/runs.py       GET  /v1/runs/{id}        status, findings, charts    │
 │                        GET  /v1/runs/{id}/stream SSE progress               │
 │                        GET  /v1/runs/{id}/trace  full reconstruction        │
+│                        GET  /v1/runs/{id}/queries/{qid}/rows                 │
 │   routes/approvals.py  POST /v1/runs/{id}/approve | /reject                  │
 │   routes/catalog.py    GET  /v1/metrics, GET /v1/schema                      │
 │   tenancy              GET  /v1/me · POST /v1/organizations                  │
@@ -156,7 +157,7 @@ than dropped at load time, so the policy itself is reviewable and testable.
 | `runs` | One row per question | `run_id`, `thread_id`, `question`, `status`, `requested_by`, timings, token and cost totals |
 | `run_steps` | One row per node execution | `run_id`, `step_id`, `node`, `status`, `started_at`, `duration_ms`, `error` |
 | `tool_calls` | One row per tool invocation | `run_id`, `step_id`, `tool`, `arguments`, `result_summary`, `error`, `duration_ms` |
-| `sql_audit` | One row per query considered — allowed, rejected or escalated | `query_id`, `run_id`, `sql`, `rewritten_sql`, `purpose`, `verdict`, `reasons`, `row_count`, `truncated`, `duration_ms` |
+| `sql_audit` | One row per query considered — allowed, rejected or escalated, **with the values bound to it** so a parameterised statement can be reproduced | `query_id`, `run_id`, `sql`, `rewritten_sql`, `purpose`, `verdict`, `reasons`, `row_count`, `truncated`, `duration_ms` |
 | `approvals` | One row per approval request | `approval_id`, `run_id`, `kind`, `payload`, `status`, `requested_at`, `decided_at`, `decided_by`, `reason` |
 | `findings` | Findings and their hypotheses | `finding_id`, `run_id`, `statement`, `material`, `evidence_query_ids`, and per-hypothesis status and reasoning |
 | `organizations` · `users` · `organization_members` | tenants, people, and the role between them | `organization_id`, `user_id`, `role` |

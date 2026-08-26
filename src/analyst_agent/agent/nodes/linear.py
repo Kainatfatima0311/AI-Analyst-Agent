@@ -606,7 +606,24 @@ def make_synthesize(ctx: NodeContext) -> Node:
         budget = ctx.budget(state)
         truncated = state.get("truncation_reason")
 
-        instruction = "Write the answer to the question."
+        # The answer is read as a report rather than a chat reply, so the sections are asked for
+        # explicitly. A model left to infer them returns a paragraph and an empty list.
+        instruction = (
+            "Write the answer to the question."
+            + PARAGRAPH
+            + "This is read as a report, not a chat reply, so three parts are expected alongside "
+            "the conclusion:"
+            + NEWLINE
+            + "- key_findings: the two to four things the reader needs, each a headline with the "
+            "measured impact behind it. A finding without a figure you measured is an "
+            "impression, so leave it out."
+            + NEWLINE
+            + "- recommendations: what to do next, each following from a named finding. A "
+            "recommendation the evidence does not support is worse than none, because it will "
+            "be acted on. Leave the list empty rather than pad it."
+            + NEWLINE
+            + "- caveats: what would change this answer. Do not empty it to look confident."
+        )
 
         reconciliations = state.get("_reconciliations") or []
         if reconciliations:
@@ -678,12 +695,36 @@ def make_synthesize(ctx: NodeContext) -> Node:
             for reconciliation in reconciliations:
                 refuted.extend(r for r in reconciliation.get("refuted", []) if r not in refuted)
 
+            # Key findings and recommendations are filtered the same way the citations are: a
+            # finding pointing at a query that never ran would put an unverifiable number on the
+            # front page of the report.
+            key_findings = [
+                {
+                    "title": finding.title,
+                    "impact": finding.impact,
+                    "severity": finding.severity,
+                    "evidence_query_ids": [
+                        q for q in finding.evidence_query_ids if q in executed
+                    ],
+                }
+                for finding in synthesis.key_findings
+            ]
+
             answer = {
                 "conclusion": synthesis.conclusion,
                 "confidence": confidence,
                 "caveats": caveats,
                 "evidence": [{"query_id": q} for q in cited],
                 "refuted": refuted,
+                "key_findings": key_findings,
+                "recommendations": [
+                    {
+                        "action": r.action,
+                        "rationale": r.rationale,
+                        "priority": r.priority,
+                    }
+                    for r in synthesis.recommendations
+                ],
             }
             status = "truncated" if truncated else "completed"
             repo.finish_run(run_id, status, answer=answer)

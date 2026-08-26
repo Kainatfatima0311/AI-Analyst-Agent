@@ -669,3 +669,220 @@ button.as-button:hover .q { color: var(--accent); }
   .report-row { flex-direction: column; align-items: stretch; }
   .report-actions { justify-content: flex-start; }
 }
+
+/* ---------------------------------------------------------------- the report */
+/*
+ * A BI report, not a chat transcript. The hierarchy carries the reading order: the executive
+ * summary is the largest thing on the page, the sections beneath it are equal siblings, and the
+ * evidence is collapsed because it is what a reader opens *after* they doubt something.
+ */
+
+.report { display: flex; flex-direction: column; gap: 16px; }
+
+.report-section {
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 20px 22px;
+}
+
+.section-label {
+  font-size: 11.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--text-muted);
+}
+.section-head-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 14px;
+  margin-bottom: 14px; flex-wrap: wrap;
+}
+.section-note { font-size: 12px; color: var(--text-muted); }
+
+/* 1 — the executive summary is the one thing that cannot be missed */
+.report-section.exec {
+  display: flex; gap: 16px;
+  border-left: 3px solid var(--accent);
+  background: linear-gradient(180deg, var(--accent-soft) 0%, var(--raised) 90%);
+}
+.exec-mark {
+  width: 40px; height: 40px; flex: 0 0 40px;
+  border-radius: 12px;
+  background: var(--accent-gradient); color: #fff;
+  display: grid; place-items: center;
+  box-shadow: 0 5px 16px rgba(108, 92, 231, .32);
+}
+.exec-body { min-width: 0; }
+.exec-text {
+  font-size: 17.5px; line-height: 1.5; font-weight: 550;
+  color: var(--text); margin: 8px 0 12px; letter-spacing: -.2px;
+}
+.exec-meta { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+
+/* 2 — findings as cards, severity on the left edge */
+.finding-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 13px;
+}
+.finding-card {
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 14px 15px;
+  display: flex; flex-direction: column; gap: 7px;
+}
+.finding-card.sev-high { border-left-color: var(--bad); }
+.finding-card.sev-medium { border-left-color: var(--warn); }
+.finding-card.sev-low { border-left-color: var(--good); }
+.finding-index {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+  color: var(--text-muted);
+}
+.finding-title { font-size: 15px; font-weight: 650; margin: 0; line-height: 1.3; }
+.finding-impact { font-size: 13px; color: var(--text-secondary); line-height: 1.45; }
+.finding-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: auto; padding-top: 4px;
+}
+.finding-sev { font-size: 11.5px; font-weight: 650; }
+
+.link-btn {
+  background: none; border: none; padding: 0;
+  font: inherit; font-size: 12px; font-weight: 550;
+  color: var(--accent); cursor: pointer;
+}
+.link-btn:hover { text-decoration: underline; }
+
+/* 3 — the investigation, in four columns of ticks */
+.proc-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 18px;
+}
+.proc-label {
+  font-size: 12px; font-weight: 650; color: var(--text); margin-bottom: 7px;
+}
+.proc-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.proc-list li {
+  display: flex; gap: 7px; align-items: flex-start;
+  font-size: 12.5px; color: var(--text-secondary); line-height: 1.4;
+}
+.tick { color: var(--good); font-weight: 700; flex: 0 0 auto; }
+.proc-empty { font-size: 12.5px; color: var(--text-muted); font-style: italic; }
+.proc-foot {
+  display: flex; gap: 16px; margin-top: 16px; padding-top: 13px;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px; color: var(--text-secondary);
+}
+.proc-foot .blocked { color: var(--bad); }
+.proc-foot .ok { color: var(--good); }
+
+/* 4 — hypotheses, grouped under the finding they explain */
+.hyp-block + .hyp-block {
+  margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border);
+}
+.hyp-subject { font-size: 14px; font-weight: 600; margin-bottom: 11px; }
+.hyp-card {
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 13px 15px; margin-bottom: 10px;
+}
+.hyp-card.st-supported { border-left-color: var(--good); }
+.hyp-card.st-refuted { border-left-color: var(--bad); }
+.hyp-card.st-inconclusive { border-left-color: var(--warn); }
+.hyp-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.hyp-index {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+  color: var(--text-muted);
+}
+.hyp-status { font-size: 12px; font-weight: 700; }
+.hyp-claim { font-size: 13.5px; color: var(--text); margin: 7px 0; line-height: 1.45; }
+.hyp-why { font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; }
+.hyp-why-label {
+  display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .8px;
+  text-transform: uppercase; color: var(--text-muted); margin-bottom: 3px;
+}
+
+/* 5 — charts, each with what it is for underneath */
+.chart-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px;
+}
+.chart-figure { margin: 0; }
+.chart-figure figcaption {
+  font-size: 12px; color: var(--text-muted); line-height: 1.45; margin-top: 8px;
+}
+
+/* 6 — evidence: facts across the top, everything else collapsed */
+.fact-row {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px;
+  padding: 14px 16px; margin-bottom: 14px;
+  background: var(--sunken); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.fact-label {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+  color: var(--text-muted); margin-bottom: 3px;
+}
+.fact-value { font-size: 13.5px; font-weight: 600; color: var(--text); word-break: break-word; }
+
+details.evidence-block { margin-bottom: 9px; }
+details.evidence-block > summary {
+  cursor: pointer; list-style: none;
+  display: flex; align-items: baseline; justify-content: space-between; gap: 14px;
+  padding: 11px 14px;
+  background: var(--sunken); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+details.evidence-block > summary::-webkit-details-marker { display: none; }
+details.evidence-block[open] > summary {
+  border-bottom-left-radius: 0; border-bottom-right-radius: 0;
+}
+.ev-purpose { font-size: 13px; font-weight: 550; color: var(--text); }
+.ev-meta { font-size: 11.5px; color: var(--text-muted); flex: 0 0 auto; }
+.evidence-body {
+  border: 1px solid var(--border); border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  padding: 13px 15px;
+}
+details.evidence-block.refused > summary { border-left: 3px solid var(--bad); }
+
+.rows-wrap {
+  overflow-x: auto; margin-top: 11px;
+  border: 1px solid var(--border); border-radius: 8px;
+}
+table.rows { border-collapse: collapse; width: 100%; font-size: 12px; }
+table.rows th, table.rows td { padding: 7px 11px; text-align: left; white-space: nowrap; }
+table.rows th {
+  background: var(--sunken); color: var(--text); font-weight: 650;
+  border-bottom: 1px solid var(--border); position: sticky; top: 0;
+}
+table.rows td { color: var(--text-secondary); border-bottom: 1px solid var(--border); }
+table.rows tr:last-child td { border-bottom: none; }
+table.rows tr:hover td { background: var(--sunken); }
+.rows-note { font-size: 11.5px; color: var(--text-muted); margin-top: 6px; }
+.rows-slot.hidden { display: none; }
+
+.caveats { margin-top: 14px; }
+
+/* 8 — recommendations, numbered by priority */
+.rec-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 11px;
+}
+.rec {
+  display: flex; gap: 13px; align-items: flex-start;
+  padding: 13px 15px;
+  background: var(--sunken); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.rec-rank {
+  flex: 0 0 auto; min-width: 34px; text-align: center;
+  padding: 4px 8px; border-radius: 7px;
+  font-size: 11.5px; font-weight: 700;
+}
+.rec-action { font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.4; }
+.rec-why { font-size: 12.5px; color: var(--text-muted); margin-top: 4px; line-height: 1.45; }
+
+@media (max-width: 720px) {
+  .report-section { padding: 16px 15px; }
+  .exec-text { font-size: 16px; }
+  .report-section.exec { flex-direction: column; }
+}

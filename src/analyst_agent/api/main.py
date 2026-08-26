@@ -238,6 +238,90 @@ def _drive_in_background(run_id: uuid.UUID, question: str, requested_by: str | N
         log.exception("background run failed", run_id=str(run_id))
 
 
+@app.get(
+    "/v1/runs/{run_id}/queries/{query_id}/rows",
+    response_model=schemas.QueryRowsOut,
+    tags=["runs"],
+)
+def query_rows(
+    run_id: uuid.UUID,
+    query_id: uuid.UUID,
+    limit: int = 50,
+    principal: Principal = Depends(current_principal),
+) -> schemas.QueryRowsOut:
+    """The rows one query returned, for the expandable evidence view.
+
+    Rebuilt from the audit trail rather than stored. The statement is recorded, it was
+    guard-approved, and re-running it is already how the frame store recovers an evicted result —
+    so this adds a read path, not a new copy of the warehouse.
+
+    Scoped twice on purpose: the run must belong to the caller's organisation, and the query must
+    belong to that run. Either check alone would let a query id from another tenant's run through.
+    """
+    _entitled(principal, "read")
+    trace = _trace_or_404(run_id, principal)
+    query = next(
+        (q for q in trace["queries"] if str(q["query_id"]) == str(query_id)), None
+    )
+    if query is None:
+        raise HTTPException(status_code=404, detail="that query is not part of this run")
+    if not query.get("executed"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"that query was {query['verdict']} and never ran, so it returned no rows. "
+                "Its statement and the reasons are in the trace."
+            ),
+        )
+
+    from analyst_agent.tools.frames import FrameNotAvailableError, get_store
+
+    try:
+        frame = get_store().get(query_id)
+    except (FrameNotAvailableError, KeyError) as exc:
+        # 410 rather than 500: the query is real and its rows are simply no longer recoverable,
+        # which is a fact about the trail rather than a fault in the service.
+        raise HTTPException(
+            status_code=410,
+            detail=f"those rows could not be rebuilt from the audit trail: {exc}",
+        ) from None
+    except Exception as exc:  # pragma: no cover - the driver's own errors
+        raise HTTPException(
+            status_code=410,
+            detail=f"that query could not be re-run: {exc}",
+        ) from None
+
+    shown = frame.head(max(1, min(limit, 500)))
+    return schemas.QueryRowsOut(
+        query_id=query_id,
+        purpose=query.get("purpose", ""),
+        columns=[str(column) for column in frame.columns],
+        rows=_jsonable_rows(shown),
+        row_count=len(frame),
+        returned=len(shown),
+        truncated=bool(query.get("truncated")),
+    )
+
+
+def _trace_or_404(run_id: uuid.UUID, principal: Principal) -> dict[str, Any]:
+    try:
+        return repo.get_trace(run_id, organization_id=principal.organization_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"no such run: {run_id}") from None
+
+
+def _jsonable_rows(frame: Any) -> list[dict[str, Any]]:
+    """Rows as JSON-safe values.
+
+    Reuses the coercion the SQL runner already needed: Postgres returns numeric as Decimal, and a
+    Decimal reaching the response would either fail to serialise or arrive as a string the page
+    then compares lexically.
+    """
+    from analyst_agent.tools.sql_runner import _jsonable
+
+    return _jsonable(frame)
+
+
 @app.post(
     "/v1/questions",
     response_model=schemas.AskResponse,

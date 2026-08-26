@@ -120,6 +120,60 @@ class Interpretation(BaseModel):
     )
 
 
+class KeyFinding(BaseModel):
+    """One headline finding, sized so a reader can act on it.
+
+    Separate from ``findings`` in the state, which are what the *investigation* raised. These are
+    what the *answer* leads with, and the difference matters: an investigation can raise a finding
+    it then explains away, and that does not belong on the front page.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    title: str = Field(
+        description="Three to six words, the way a headline is written. Not a sentence."
+    )
+    impact: str = Field(
+        description=(
+            "The measured change, with its numbers: 'revenue contribution fell from 28% to 11%'. "
+            "A finding without a figure is an impression."
+        )
+    )
+    severity: Literal["high", "medium", "low"] = Field(
+        description=(
+            "high: this is the answer, or most of it. medium: it contributes materially. "
+            "low: worth knowing, not worth acting on alone. Judge by size of effect, not by how "
+            "surprising it was."
+        )
+    )
+    evidence_query_ids: list[str] = Field(
+        default_factory=list,
+        description="The queries this finding's numbers came from, so a reader can check them.",
+    )
+
+
+class Recommendation(BaseModel):
+    """One action, with the reason it follows from the analysis."""
+
+    model_config = {"extra": "forbid"}
+
+    action: str = Field(
+        description=(
+            "An instruction somebody could act on this week: 'check premium category stock levels "
+            "with the three largest sellers'. Not 'improve delivery'."
+        )
+    )
+    rationale: str = Field(
+        description=(
+            "Which finding this follows from, in one sentence. If you cannot name one, the "
+            "recommendation does not belong here."
+        )
+    )
+    priority: Literal["high", "medium", "low"] = Field(
+        description="By expected effect on the problem, not by how easy it is."
+    )
+
+
 class Synthesis(BaseModel):
     """The answer."""
 
@@ -153,6 +207,22 @@ class Synthesis(BaseModel):
         description=(
             "Explanations you tested and ruled out, and why. Naming what you disproved is part "
             "of the answer, not an appendix to it."
+        ),
+    )
+    key_findings: list[KeyFinding] = Field(
+        default_factory=list,
+        description=(
+            "The two to four things a reader needs from this answer, each as a headline with its "
+            "measured impact. This is not a summary of the conclusion in different words - if a "
+            "finding does not carry a number you measured, leave it out."
+        ),
+    )
+    recommendations: list[Recommendation] = Field(
+        default_factory=list,
+        description=(
+            "What to do next, in the order you would do it. Each one must follow from something "
+            "in this analysis; a recommendation the evidence does not support is worse than none, "
+            "because it will be acted on. Leave empty rather than pad it."
         ),
     )
 

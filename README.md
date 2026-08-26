@@ -69,6 +69,33 @@ reviewer wants to know.
 
 ---
 
+## The answer is a report, not a chat reply
+
+Eight sections, in the order a reader needs them:
+
+| | |
+|---|---|
+| **1 · Executive summary** | the conclusion in the first line of the page, with its confidence |
+| **2 · Key findings** | cards: title, measured impact, severity. A finding without a figure the agent measured is left out |
+| **3 · Investigation process** | metrics checked, tables analysed, questions tested, steps taken — **read off the audit trail**, not described by the model |
+| **4 · Hypothesis testing** | every competing explanation with its verdict and the evidence that settled it |
+| **5 · Visual analytics** | each chart with the purpose of the query behind it |
+| **6 · Evidence & traceability** | analysis id, queries executed, metrics used, data sources — and the SQL **and its rows** one click away, including the queries the guard refused |
+| **7 · Confidence** | a score out of 100 with the five factors that produced it |
+| **8 · Recommended actions** | prioritised, each naming the finding it follows from |
+
+Two rules hold the page honest. The sections that are *judgements* — headlines, severities,
+recommendations — come from the model's structured output and are filtered against the queries that
+actually ran, so a card can never carry a number from a query that did not execute. The sections
+that are *record* — the investigation process, the evidence, the confidence factors — are derived
+from the trace, because asking a model to describe its own process produces a plausible paragraph
+rather than the truth.
+
+Where the analysis produced no headlines, the page falls back to the findings the investigation
+raised and **says so**, rather than inventing a card.
+
+---
+
 ## Organisations, teams and data sources
 
 | | |
@@ -157,6 +184,7 @@ the guard and the metrics layer is testable without it.
 | `POST /v1/runs/{id}/answer` | reply to a clarification the agent asked for |
 | `GET /v1/metrics` · `GET /v1/schema` | the approved definitions; what is queryable |
 | `GET /v1/dashboard/summary` | totals, outcome rates, recent questions, most-used definitions, recent findings |
+| `GET /v1/runs/{id}/queries/{qid}/rows` | the rows behind one query, rebuilt from the recorded statement |
 | `GET /v1/me` · `POST /v1/organizations` | who the caller is; create an organisation |
 | `GET /v1/team` · `POST /v1/team/invite` · `PATCH /v1/team/member/{id}` | the team, and managing it |
 | `GET` · `POST` · `DELETE /v1/team/keys[/{id}]` | issue and revoke API keys |

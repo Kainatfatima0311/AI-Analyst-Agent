@@ -389,6 +389,424 @@ function chartPanel(chart, fallbackTitle) {
     ${areaChart(read.x, read.y, read.colour)}</div>`;
 }
 
+/* ------------------------------------------------------------ the report */
+/*
+ * Eight sections, in the order a reader needs them: what happened, what the headlines are, what
+ * was looked at, which explanations were tested, what the charts show, where the numbers came
+ * from, how confident this is, and what to do next.
+ *
+ * The ordering is the whole design. A chat reply puts the reasoning first and the answer
+ * somewhere in the middle; a report puts the answer in the first line and everything that
+ * supports it underneath, so a reader can stop as soon as they have what they came for.
+ */
+
+const SEVERITY = {
+  high: ["High", "var(--bad)"],
+  medium: ["Medium", "var(--warn)"],
+  low: ["Low", "var(--good)"],
+};
+
+const PRIORITY = {
+  high: ["1st", "var(--bad)"],
+  medium: ["2nd", "var(--warn)"],
+  low: ["3rd", "var(--good)"],
+};
+
+/** 1 · Executive summary: the conclusion, in the first line of the page. */
+function executiveSummary(run) {
+  const answer = run.answer || {};
+  const detail = answer.confidence_detail || {};
+  const tone =
+    detail.band === "high" ? "var(--good)" : detail.band === "medium" ? "var(--warn)" : "var(--bad)";
+  return `<section class="report-section exec">
+    <div class="exec-mark">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2.8l1.9 5.1 5.1 1.9-5.1 1.9L12 16.8l-1.9-5.1L5 9.8l5.1-1.9L12 2.8Z"/></svg>
+    </div>
+    <div class="exec-body">
+      <div class="section-label">Executive summary</div>
+      <p class="exec-text">${esc(answer.conclusion)}</p>
+      <div class="exec-meta">
+        <span class="chip" style="color:${tone};border-color:${tone}55;background:${tone}12">
+          ${detail.score ?? 0}% confidence</span>
+        ${chip(run.status)}
+        <span class="when">${ago(run.created_at)}</span>
+      </div>
+    </div>
+  </section>`;
+}
+
+/** 2 · Key findings, as cards: title, impact, severity. */
+function keyFindings(run) {
+  const findings = (run.answer && run.answer.key_findings) || [];
+  if (!findings.length) {
+    // Falls back to the investigation's own findings rather than inventing headlines. A card with
+    // a title the analysis never produced would be the one piece of this page that is not evidence.
+    const raised = run.findings || [];
+    if (!raised.length) return "";
+    return `<section class="report-section">
+      <div class="section-head-row"><div class="section-label">Key findings</div>
+        <span class="section-note">from the investigation; this run produced no headline
+          summary</span></div>
+      <div class="finding-grid">${raised
+        .slice(0, 4)
+        .map(
+          (finding, index) => `<article class="finding-card ${
+            finding.material ? "sev-high" : "sev-low"
+          }">
+            <div class="finding-index">Finding ${index + 1}</div>
+            <h3 class="finding-title">${esc(finding.statement)}</h3>
+            ${
+              finding.material
+                ? '<div class="finding-sev" style="color:var(--warn)">Needed explaining</div>'
+                : ""
+            }
+          </article>`
+        )
+        .join("")}</div></section>`;
+  }
+
+  return `<section class="report-section">
+    <div class="section-head-row"><div class="section-label">Key findings</div>
+      <span class="section-note">${findings.length} of them, most severe first</span></div>
+    <div class="finding-grid">${findings
+      .map((finding, index) => {
+        const [label, colour] = SEVERITY[finding.severity] || SEVERITY.medium;
+        return `<article class="finding-card sev-${finding.severity}">
+          <div class="finding-index">Finding ${index + 1}</div>
+          <h3 class="finding-title">${esc(finding.title)}</h3>
+          <div class="finding-impact">${esc(finding.impact)}</div>
+          <div class="finding-foot">
+            <span class="finding-sev" style="color:${colour}">${label} severity</span>
+            ${
+              (finding.evidence_query_ids || []).length
+                ? `<button class="link-btn" data-jump="${finding.evidence_query_ids[0]}">
+                     evidence →</button>`
+                : ""
+            }
+          </div>
+        </article>`;
+      })
+      .join("")}</div></section>`;
+}
+
+/** 3 · Investigation process: what was looked at, read off the trace. */
+function investigationProcess(run) {
+  const investigation = run.investigation;
+  if (!investigation) return "";
+  const list = (label, items, empty) => `<div class="proc-col">
+    <div class="proc-label">${esc(label)}</div>
+    ${
+      items.length
+        ? `<ul class="proc-list">${items
+            .map((item) => `<li><span class="tick">✓</span>${esc(item)}</li>`)
+            .join("")}</ul>`
+        : `<div class="proc-empty">${esc(empty)}</div>`
+    }</div>`;
+
+  return `<section class="report-section">
+    <div class="section-head-row"><div class="section-label">Investigation process</div>
+      <span class="section-note">read off the audit trail, not described by the model</span></div>
+    <div class="proc-grid">
+      ${list("Metrics checked", investigation.metrics_checked, "No approved metric was needed")}
+      ${list("Tables analysed", investigation.tables_analyzed, "No table was read")}
+      ${list("Questions tested", investigation.questions_tested, "Nothing needed explaining")}
+      ${list("Steps taken", investigation.steps, "The run stopped before it started")}
+    </div>
+    <div class="proc-foot">
+      <span>${investigation.queries_executed} quer${
+    investigation.queries_executed === 1 ? "y" : "ies"
+  } executed</span>
+      ${
+        investigation.queries_blocked
+          ? `<span class="blocked">${investigation.queries_blocked} blocked by the guard</span>`
+          : '<span class="ok">nothing blocked</span>'
+      }
+    </div>
+  </section>`;
+}
+
+/** 4 · Hypothesis testing: the competing explanations and how each was settled. */
+function hypothesisTesting(run) {
+  const findings = (run.findings || []).filter((f) => (f.hypotheses || []).length);
+  if (!findings.length) return "";
+
+  return `<section class="report-section">
+    <div class="section-head-row"><div class="section-label">Hypothesis testing</div>
+      <span class="section-note">the agent cannot reach an answer on the first explanation
+        alone</span></div>
+    ${findings
+      .map(
+        (finding) => `<div class="hyp-block">
+          <div class="hyp-subject">${esc(finding.statement)}</div>
+          ${(finding.hypotheses || [])
+            .map((hypothesis, index) => {
+              const status = hypothesis.status || "proposed";
+              const [label, , colour] = [
+                (STATUS[status] || ["Proposed", "·", "#6b6a66"])[0],
+                null,
+                (STATUS[status] || ["", "", "#6b6a66"])[2],
+              ];
+              return `<article class="hyp-card st-${status}">
+                <div class="hyp-head">
+                  <span class="hyp-index">Hypothesis ${index + 1}</span>
+                  <span class="hyp-status" style="color:${colour}">${esc(label)}</span>
+                </div>
+                <div class="hyp-claim">${esc(hypothesis.statement)}</div>
+                ${
+                  hypothesis.reasoning
+                    ? `<div class="hyp-why"><span class="hyp-why-label">Evidence</span>
+                         ${esc(hypothesis.reasoning)}</div>`
+                    : ""
+                }
+                ${(hypothesis.test_query_ids || [])
+                  .map(
+                    (queryId) =>
+                      `<button class="link-btn" data-rows="${queryId}">
+                        view the query and its rows →</button>`
+                  )
+                  .join("")}
+              </article>`;
+            })
+            .join("")}
+        </div>`
+      )
+      .join("")}
+  </section>`;
+}
+
+/** 5 · Visual analytics: every chart with its title and what it means. */
+function visualAnalytics(run, trace) {
+  const charts = run.charts || [];
+  if (!charts.length) {
+    return `<section class="report-section">
+      <div class="section-head-row"><div class="section-label">Visual analytics</div></div>
+      <div class="plot-blank">No chart for this answer — the agent judged a figure would not add
+        to the numbers. The values are in the evidence below.</div>
+    </section>`;
+  }
+  return `<section class="report-section">
+    <div class="section-head-row"><div class="section-label">Visual analytics</div>
+      <span class="section-note">each chart names the query it was built from</span></div>
+    <div class="chart-grid">${charts
+      .map((chart) => {
+        const meaning = chartMeaning(chart, trace);
+        return `<figure class="chart-figure">
+          ${chartPanel(chart, chart.title || "Chart")}
+          <figcaption>${esc(meaning)}</figcaption>
+        </figure>`;
+      })
+      .join("")}</div>
+  </section>`;
+}
+
+/**
+ * What a chart is *for*, taken from the purpose of the query behind it.
+ *
+ * Not generated prose. The purpose was written by the agent when it ran the query and recorded in
+ * the audit trail, so it already says what the figure was meant to establish — inventing a
+ * caption here would be the page speaking for the analysis.
+ */
+function chartMeaning(chart, trace) {
+  const query = ((trace && trace.queries) || []).find(
+    (q) => String(q.query_id) === String(chart.query_id)
+  );
+  if (query && query.purpose) {
+    return `${query.purpose}${query.row_count != null ? ` · ${query.row_count} rows` : ""}`;
+  }
+  return `From query ${chart.query_id}`;
+}
+
+/** 6 · Evidence and traceability, with the SQL and the rows one click away. */
+function evidenceSection(run, trace) {
+  const answer = run.answer || {};
+  const investigation = run.investigation || {};
+  const considered = (trace && trace.queries) || [];
+  const refused = considered.filter((q) => !q.executed);
+
+  const facts = [
+    ["Analysis ID", `RUN-${String(run.run_id).slice(0, 8).toUpperCase()}`],
+    ["Queries executed", investigation.queries_executed ?? 0],
+    [
+      "Metrics used",
+      (investigation.metrics_checked || []).join(", ") || "none — ad hoc SQL",
+    ],
+    [
+      "Data sources",
+      (investigation.tables_analyzed || [])
+        .map((table) => table.split(".").pop())
+        .join(", ") || "none",
+    ],
+  ];
+
+  return `<section class="report-section">
+    <div class="section-head-row"><div class="section-label">Evidence &amp; traceability</div>
+      <span class="section-note">every number above leads back to one of these</span></div>
+
+    <div class="fact-row">${facts
+      .map(
+        ([label, value]) => `<div class="fact">
+          <div class="fact-label">${esc(label)}</div>
+          <div class="fact-value">${esc(value)}</div></div>`
+      )
+      .join("")}</div>
+
+    ${(answer.evidence || [])
+      .map(
+        (item) => `<details class="evidence-block">
+          <summary>
+            <span class="ev-purpose">${esc(item.purpose)}</span>
+            <span class="ev-meta">${item.row_count} rows</span>
+          </summary>
+          <div class="evidence-body">
+            <div class="idline">${esc(item.query_id)}</div>
+            <pre class="sql">${esc(item.sql)}</pre>
+            <button class="btn btn-sm" data-rows="${item.query_id}">Show the rows</button>
+            <div class="rows-slot" id="rows-${item.query_id}"></div>
+          </div>
+        </details>`
+      )
+      .join("")}
+
+    ${
+      refused.length
+        ? `<details class="evidence-block refused">
+            <summary><span class="ev-purpose">${refused.length} quer${
+            refused.length === 1 ? "y" : "ies"
+          } that did not run</span>
+              <span class="ev-meta">blocked or awaiting a decision</span></summary>
+            <div class="evidence-body">${refused
+              .map(
+                (query) => `<div class="q-row">
+                  <div class="purpose">${esc(query.purpose)}</div>
+                  <div style="margin:5px 0">${chip(query.verdict)}</div>
+                  ${
+                    (query.reasons || []).length
+                      ? `<ul class="plain">${query.reasons
+                          .map((reason) => `<li>${esc(reason)}</li>`)
+                          .join("")}</ul>`
+                      : ""
+                  }
+                  <pre class="sql">${esc(query.rewritten_sql || query.sql)}</pre></div>`
+              )
+              .join("")}</div>
+          </details>`
+        : ""
+    }
+
+    <details class="evidence-block">
+      <summary><span class="ev-purpose">Analysis steps</span>
+        <span class="ev-meta">${((trace && trace.steps) || []).length} nodes</span></summary>
+      <div class="evidence-body">${timeline((trace && trace.steps) || [])}</div>
+    </details>
+  </section>`;
+}
+
+/** 7 · Confidence, with the factors that produced it. */
+function confidenceSection(run) {
+  const detail = (run.answer || {}).confidence_detail;
+  if (!detail) return "";
+  return `<section class="report-section">
+    <div class="section-head-row"><div class="section-label">Confidence</div>
+      <span class="section-note">computed from the trace, not asserted by the model</span></div>
+    ${confidenceBlock(detail, false)}
+    ${
+      (run.answer.caveats || []).length
+        ? `<div class="caveats"><div class="proc-label">Caveats</div>
+            <ul class="plain">${run.answer.caveats
+              .map((caveat) => `<li>${esc(caveat)}</li>`)
+              .join("")}</ul></div>`
+        : ""
+    }
+  </section>`;
+}
+
+/** 8 · Recommended actions. */
+function recommendations(run) {
+  const items = (run.answer && run.answer.recommendations) || [];
+  if (!items.length) return "";
+  return `<section class="report-section">
+    <div class="section-head-row"><div class="section-label">Recommended actions</div>
+      <span class="section-note">each follows from a finding above</span></div>
+    <ol class="rec-list">${items
+      .map((item) => {
+        const [label, colour] = PRIORITY[item.priority] || PRIORITY.medium;
+        return `<li class="rec">
+          <span class="rec-rank" style="background:${colour}18;color:${colour}">${label}</span>
+          <div><div class="rec-action">${esc(item.action)}</div>
+            <div class="rec-why">${esc(item.rationale)}</div></div>
+        </li>`;
+      })
+      .join("")}</ol>
+  </section>`;
+}
+
+/** The whole report, assembled. */
+function reportView(run, trace) {
+  return `<div class="report">
+    ${executiveSummary(run)}
+    ${keyFindings(run)}
+    ${investigationProcess(run)}
+    ${hypothesisTesting(run)}
+    ${visualAnalytics(run, trace)}
+    ${evidenceSection(run, trace)}
+    ${confidenceSection(run)}
+    ${recommendations(run)}
+    ${
+      (run.answer.refuted || []).length
+        ? `<section class="report-section">
+            <div class="section-label">Ruled out</div>
+            <ul class="plain">${run.answer.refuted
+              .map((item) => `<li>${esc(item)}</li>`)
+              .join("")}</ul></section>`
+        : ""
+    }
+  </div>`;
+}
+
+/** Fetch and render the rows behind one query, on demand. */
+async function showRows(runId, queryId) {
+  const slot = document.getElementById(`rows-${queryId}`);
+  if (!slot) return;
+  if (slot.dataset.loaded === "1") {
+    slot.classList.toggle("hidden");
+    return;
+  }
+  slot.innerHTML = '<div class="proc-empty">Loading the rows…</div>';
+  try {
+    const data = await get(`/v1/runs/${runId}/queries/${queryId}/rows?limit=50`);
+    slot.dataset.loaded = "1";
+    slot.innerHTML = rowsTable(data);
+  } catch (error) {
+    // The rows are rebuilt by re-running the statement, so this can genuinely fail - say why
+    // rather than showing an empty table, which reads as "the query returned nothing".
+    slot.innerHTML = `<div class="proc-empty">${esc(error.message)}</div>`;
+  }
+}
+
+function rowsTable(data) {
+  if (!data.rows.length) {
+    return '<div class="proc-empty">That query returned no rows.</div>';
+  }
+  const head = data.columns.map((column) => `<th>${esc(column)}</th>`).join("");
+  const body = data.rows
+    .map(
+      (row) =>
+        `<tr>${data.columns
+          .map((column) => `<td>${esc(row[column] ?? "")}</td>`)
+          .join("")}</tr>`
+    )
+    .join("");
+  const note =
+    data.returned < data.row_count
+      ? `<div class="rows-note">showing ${data.returned} of ${data.row_count} rows</div>`
+      : `<div class="rows-note">${data.row_count} rows</div>`;
+  return `<div class="rows-wrap"><table class="rows"><thead><tr>${head}</tr></thead>
+    <tbody>${body}</tbody></table></div>${note}`;
+}
+
+
 /* ------------------------------------------------------------- rendering */
 
 function renderSuggestions() {
@@ -549,7 +967,7 @@ async function renderResult() {
               <button class="btn btn-primary btn-sm" id="details-btn">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                      stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M4 19V5M4 19h16"/><path d="M8 15V9M13 15V6M18 15v-4"/></svg>View Details</button>
+                  <path d="M4 19V5M4 19h16"/><path d="M8 15V9M13 15V6M18 15v-4"/></svg>Full report</button>
             </div>`
           : ""
       }
@@ -625,71 +1043,29 @@ function renderDetails(run, trace) {
     box.innerHTML = "";
     return;
   }
-  const evidence = (answer.evidence || [])
-    .map(
-      (item) => `<div class="q-row">
-        <div class="purpose">${esc(item.purpose)}</div>
-        <div class="idline">${esc(item.query_id)}${
-        item.row_count != null ? ` · ${item.row_count} rows` : ""
-      }</div>
-        <pre class="sql">${esc(item.sql)}</pre></div>`
-    )
-    .join("");
 
-  const considered = (trace.queries || [])
-    .map(
-      (query) => `<div class="q-row">
-        <div class="purpose">${esc(query.purpose)}</div>
-        <div style="margin:5px 0">${chip(query.verdict)}${
-        query.executed ? `<span class="chip" style="margin-left:5px">${query.row_count} rows</span>` : ""
-      }</div>
-        ${
-          (query.reasons || []).length
-            ? `<ul class="plain">${query.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>`
-            : ""
-        }
-        <pre class="sql">${esc(query.rewritten_sql || query.sql)}</pre></div>`
-    )
-    .join("");
-
-  const hypotheses = (run.findings || [])
-    .map(
-      (finding) => `<div class="q-row"><div class="purpose">${esc(finding.statement)}</div>
-        ${(finding.hypotheses || [])
-          .map(
-            (h) => `<div class="hyp"><div class="claim">${esc(h.statement)}</div>
-              <div style="margin:5px 0">${chip(h.status)}</div>
-              ${h.reasoning ? `<div class="why">${esc(h.reasoning)}</div>` : ""}</div>`
-          )
-          .join("")}</div>`
-    )
-    .join("");
-
-  box.innerHTML = `
-    <h3>The answer</h3>
-    <div class="conclusion">${esc(answer.conclusion)}</div>
-    <div style="margin-top:11px">${confidenceChip(answer.confidence)}
-      <span class="chip" style="margin-left:5px">${(answer.evidence || []).length} queries cited</span></div>
-    <div class="sub-head">How confident, and why</div>
-    ${confidenceBlock(answer.confidence_detail, false)}
-    ${
-      (answer.refuted || []).length
-        ? `<div class="sub-head">Ruled out</div><ul class="plain">${answer.refuted
-            .map((r) => `<li>${esc(r)}</li>`)
-            .join("")}</ul>`
-        : ""
-    }
-    ${
-      (answer.caveats || []).length
-        ? `<div class="sub-head">Caveats</div><ul class="plain">${answer.caveats
-            .map((c) => `<li>${esc(c)}</li>`)
-            .join("")}</ul>`
-        : ""
-    }
-    ${hypotheses ? `<div class="sub-head">Findings and the explanations tested</div>${hypotheses}` : ""}
-    <div class="sub-head">The SQL behind each cited number</div>${evidence}
-    <div class="sub-head">Every query considered, including the ones that never ran</div>${considered}
-    <div class="sub-head">What it did, in order</div>${timeline(trace.steps || [])}`;
+  // The eight-section report. The card above it is the glance; this is the read, and it is the
+  // reason the page is not a chat transcript with a paragraph in it.
+  box.innerHTML = reportView(run, trace);
+  box.querySelectorAll("[data-rows]").forEach((button) =>
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      showRows(run.run_id, button.dataset.rows);
+    })
+  );
+  box.querySelectorAll("[data-jump]").forEach((button) =>
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const target = document.getElementById(`rows-${button.dataset.jump}`);
+      const block = target && target.closest("details");
+      if (block) {
+        block.open = true;
+        block.scrollIntoView({ behavior: "smooth", block: "center" });
+        showRows(run.run_id, button.dataset.jump);
+      }
+    })
+  );
+  return;
 }
 
 function wireResult(run, trace) {

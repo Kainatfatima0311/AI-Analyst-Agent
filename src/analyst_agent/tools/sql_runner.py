@@ -142,6 +142,10 @@ conclude there is no data.
                 sensitive_columns=list(verdict.sensitive_columns),
                 estimated_cost=verdict.estimated_cost,
                 step_id=step_id,
+                # Recorded with the statement so a parameterised query can be reproduced. Without
+                # this, re-running a metric_query statement fails at its own placeholder - which
+                # is what "traceable to its queries" cannot afford to mean.
+                parameters=payload.parameters,
             )
 
             if not verdict.allowed:

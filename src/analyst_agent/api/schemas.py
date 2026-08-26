@@ -85,6 +85,67 @@ class AnswerOut(BaseModel):
     caveats: list[str] = Field(default_factory=list)
     refuted: list[str] = Field(default_factory=list)
     evidence: list[EvidenceOut] = Field(default_factory=list)
+    key_findings: list[KeyFindingOut] = Field(
+        default_factory=list,
+        description="The headlines, each with its measured impact and severity.",
+    )
+    recommendations: list[RecommendationOut] = Field(
+        default_factory=list,
+        description="What to do next, each following from a named finding.",
+    )
+
+
+class KeyFindingOut(BaseModel):
+    """One headline finding, as the report leads with it.
+
+    Distinct from `FindingOut`, which is what the *investigation* raised. An investigation can
+    raise a finding and then explain it away, and that does not belong on the front page.
+    """
+
+    title: str
+    impact: str
+    severity: Literal["high", "medium", "low"]
+    evidence_query_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class RecommendationOut(BaseModel):
+    action: str
+    rationale: str
+    priority: Literal["high", "medium", "low"]
+
+
+class InvestigationOut(BaseModel):
+    """What the agent actually looked at, derived from the trace rather than narrated.
+
+    Every list here is read off the audit trail: the metrics from the definition versions that
+    appear in query purposes, the tables from the objects the guard resolved, the questions from
+    the hypotheses that were tested. Asking the model to describe its own process would produce a
+    plausible paragraph; this produces the record.
+    """
+
+    metrics_checked: list[str] = Field(default_factory=list)
+    tables_analyzed: list[str] = Field(default_factory=list)
+    questions_tested: list[str] = Field(default_factory=list)
+    steps: list[str] = Field(default_factory=list)
+    queries_executed: int = 0
+    queries_blocked: int = 0
+
+
+class QueryRowsOut(BaseModel):
+    """The rows one query returned, for the expandable evidence view.
+
+    Rebuilt from the audit trail on request rather than stored: the statement is recorded, it was
+    guard-approved, and re-running it is how the frame store already recovers an evicted result.
+    Storing every result set would multiply the database for data the warehouse already holds.
+    """
+
+    query_id: uuid.UUID
+    purpose: str
+    columns: list[str] = Field(default_factory=list)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    row_count: int = 0
+    returned: int = 0
+    truncated: bool = False
 
 
 class HypothesisOut(BaseModel):
@@ -123,6 +184,10 @@ class RunOut(BaseModel):
     tokens_in: int = 0
     tokens_out: int = 0
     answer: AnswerOut | None = None
+    investigation: InvestigationOut | None = Field(
+        default=None,
+        description="What was looked at, read off the trace rather than described by the model.",
+    )
     findings: list[FindingOut] = Field(default_factory=list)
     charts: list[ChartOut] = Field(default_factory=list)
     clarifications: list[ClarificationOut] = Field(default_factory=list)

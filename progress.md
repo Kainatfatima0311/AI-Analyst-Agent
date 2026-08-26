@@ -27,6 +27,7 @@ Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known is
 | 16 | Groq backend, evidence in context, new interface | ✅ | 2026-08-26 | `feat(llm)` · `feat(ui)` — provider swap, result rows reach synthesis, hand-written frontend |
 | 17 | **Phase 2** — dashboards, reports, exports, confidence scoring | ✅ | 2026-08-26 | `feat(product)` — `/v1/dashboard/summary`, saved reports, PDF/Excel/PNG, 0-100 score |
 | 18 | **Phase 3** — organisations, data sources, sharing, alerts, audit | ✅ | 2026-08-26 | `feat(enterprise)` — multi-tenancy, encrypted secrets, share links, anomaly detection |
+| 19 | The answer as a BI report — eight sections, evidence expandable | ✅ | 2026-08-26 | `feat(report)` — key findings, investigation process, recommendations, query rows |
 
 ## Key metrics (filled in as they are measured)
 
@@ -1268,3 +1269,72 @@ rather than a finishing touch.
 executes and passes the guard). A **scored** run against a live model is still outstanding: the Groq
 free tier's per-minute token limit makes a 32-question run a multi-hour exercise, so the numbers in
 §6 of the technical report remain the one thing this project has not measured.
+
+
+### Step 19 — The answer as a report rather than a chat reply
+
+**Status:** ✅ Done · **Date:** 2026-08-26 · **Commit:** `feat(report)`
+
+The agent's answer now reads as a business intelligence report: eight sections, in the order a
+reader needs them. **670 tests pass**; `ruff` and `mypy` clean.
+
+**What the brief asked for, and where it could not be only presentation.** The request was to
+improve the output experience and leave the backend alone. Four of the eight sections needed data
+the agent did not emit — key findings with a title, impact and severity; recommended actions; the
+purpose behind each chart; and the rows behind a query. Deriving those in the page would have meant
+*inventing* them, and a persuasive layout over invented content is the worst thing this project
+could ship. So the **output contract** was extended and the **investigation logic was not touched**:
+the graph, the guard, the hypothesis loop and the budgets are unchanged.
+
+**1 · Two new fields on the synthesis schema.** `key_findings` (title, measured impact, severity,
+the queries behind it) and `recommendations` (action, rationale, priority). Both are asked for
+explicitly in the instruction, because a model left to infer them returns a paragraph and two empty
+lists.
+
+Both are **filtered against the queries that actually ran**, the same way citations already were. A
+headline card is the most prominent thing on the page and therefore the worst possible place for a
+number from a query that never executed.
+
+**2 · The investigation section is derived, never narrated.** Metrics from the definition versions
+`metric_query` writes into a query's purpose; tables from the `referenced_objects` the guard
+resolved while parsing; questions from the hypotheses that reached a terminal state; steps from the
+nodes that ran. Asking the model to describe its own process would have produced a fluent paragraph
+that may or may not match what happened — this produces the record.
+
+Two small judgements in there: an *untested* hypothesis is not a question tested, and the
+bookkeeping nodes (`intake`, `respond`) are left out, because a process list that includes them
+describes the software rather than the analysis.
+
+**3 · The rows behind a query, on demand.** `GET /v1/runs/{id}/queries/{qid}/rows` rebuilds a result
+set from the recorded statement rather than storing every result. Scoped twice — the run to the
+caller's organisation, the query to that run — because either check alone would let a query id from
+another tenant through.
+
+**4 · A real gap in the traceability claim, found by building this.** Rebuilding a `metric_query`
+result failed with a syntax error at its own `%(date_from)s` placeholder: the audit trail stored the
+statement but **not the values bound to it**. "Every conclusion is traceable to its queries" is
+hollow if a reviewer cannot re-run the query a figure came from, and the parameterised path is
+exactly the one the metrics layer pushes work through.
+
+Migration 006 adds `sql_audit.parameters`. A pre-migration row now answers **410 with an
+explanation** rather than surfacing a driver syntax error as a 500 — the query is real and its rows
+are simply no longer recoverable, which is a fact about the trail rather than a fault in the
+service. Verified live: an old query returns the 410, a new one returns the twelve real monthly
+figures.
+
+**5 · The page.** Executive summary as the largest thing on it; findings as cards with severity on
+the left edge; the investigation in four columns of ticks; hypotheses grouped under the finding they
+explain, each showing its verdict and evidence; charts with the purpose of their query underneath;
+evidence collapsed, because it is what a reader opens *after* they doubt something; the confidence
+ring with its factors; recommendations numbered by priority.
+
+Where the analysis produced no headlines the page falls back to the investigation's own findings
+**and says so**. A card carrying a title the analysis never produced would be the one thing on the
+page that is not evidence, and the fallback label is what stops it becoming that.
+
+**What the tests pin.** `tests/integration/test_report_output.py` is about **provenance** rather than
+layout: that a finding citing a query which never ran has its citation dropped, that the
+investigation section comes off the trail, that an untested hypothesis is not counted as tested,
+that asking for the rows of a blocked query explains why there are none instead of showing an empty
+table, and that the page actually calls each new endpoint — the failure mode this project has now
+hit three times is something built and never wired.
