@@ -23,6 +23,7 @@ Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known is
 | 12 | Evaluation suite (≥30 questions) | ⚠️ | 2026-08-26 | `test(evals)` — built; scores need an API key |
 | 13 | Dockerized stack, CI, README | ✅ | 2026-08-26 | `build(ci)` / `v0.7-deployable` |
 | 14 | Final technical report | ✅ | 2026-08-26 | `docs(report)` / `v1.0` |
+| 15 | Design-conformance pass — four gaps closed | ✅ | 2026-08-26 | `feat(agent)` — tool-calling nodes, `metric_query`, wired gates, distinctness |
 
 ## Key metrics (filled in as they are measured)
 
@@ -896,3 +897,70 @@ patching is precisely what failed.
 All files are now clean UTF-8 with no BOM. The lesson is narrow and worth keeping: on Windows
 PowerShell 5.1, do not use `Set-Content`/`Add-Content` to write a file containing non-ASCII text,
 and do not trust a `-replace` that reports no error.
+
+
+### Step 15 — Design-conformance pass: reading the design back against the code
+
+**Status:** ✅ Done · **Date:** 2026-08-26 · **Commit:** `feat(agent)` + `docs`
+
+The build was finished. This step read [docs/design-document.md](docs/design-document.md) back
+against the implementation instead of reading the implementation against itself, and found four
+places that had quietly settled for less than the document promised. All four are now closed.
+**473 tests pass** across 53 source files; `ruff` and `mypy` clean.
+
+**1 · Four of the six tools were unreachable.** `schema_inspector`, `python_analysis` and
+`chart_builder` were built, registered, unit-tested — and no node ever offered them to the model.
+The system prompt told the model to check the schema before writing SQL and gave it no way to do
+so. Fixed with `agent/tool_loop.py`, a bounded tool-calling loop, and three nodes that use it:
+`gather_context` (schema and terms, before planning), `analyse` (a derived view of a result that
+already exists, rather than another query) and `visualize` (the chart, carrying the `query_id` it
+was built from). Each loop caps its turns and offers **only** the tools its node names; a call to
+anything else comes back as a refusal in the tool result rather than an exception, because the
+model can recover from the first and not the second.
+
+Worth recording *how* this hid: every tool had passing tests, so the suite was green while the
+agent could not reach the tools. A tool inventory is not a capability until a node offers it.
+
+**2 · The metrics layer was correct and unused.** The registry could render a statement from a
+metric name and declared dimension names — but nothing let the *agent* do that. `metric_lookup`
+returned what a metric meant, and the model then wrote its own SQL for it, so the layer's central
+claim (for an approved metric, no free text from the model reaches SQL) was true of the registry
+and false of the agent. A sixth tool, `metric_query`, closes it: the model supplies names, the
+registry assembles the statement, values are bound as parameters, and an undeclared dimension is
+refused rather than interpolated. It runs through `sql_runner`, so the rendered statement still
+passes the guard and still lands in `sql_audit` — a narrower door, not a bypass. A new
+`compute_metrics` node offers it after `plan`; if no approved metric answers the question the run
+falls through to `author_sql` as before.
+
+Threading parameters through revealed a second fault: the EXPLAIN cost gate could not plan a
+statement containing `%(name)s` placeholders, so **every** metric query escalated to human
+approval. Parameters now travel through `check` → `gate` → `estimate_cost` and are bound for the
+EXPLAIN too.
+
+**3 · Approval point 3 had a function and no caller.** `request_budget_extension` existed and
+nothing called it, so budget exhaustion went straight to a truncated answer — the design says it
+asks first. Now `author_sql` parks the run with the question when the budget runs out, and a
+refusal produces the truncated answer it produced before. The difference is that a human gets to
+decide.
+
+**4 · Hypothesis distinctness was a rubric line.** The design says a hypothesis with no
+distinguishing test is rejected at design time. In practice only identical test SQL was caught.
+`agent/distinctness.py` now normalises and compares both the statement text and the hypothesis
+wording, so two phrasings of one idea are recorded as one hypothesis — no result could separate
+them, and counting them as two would let the two-hypothesis gate be satisfied by a paraphrase.
+Paraphrase beyond near-verbatim is still the judged grader's job, and the report says so.
+
+**Also fixed:** `executed_query_ids` counted only `allowed` queries, so a query a human had
+**approved** was not counted as evidence — the finding it supported would have looked
+unevidenced. Both verdicts count now.
+
+**Docs brought back into line.** [docs/design-document.md](docs/design-document.md) (six tools,
+which tools the model chooses versus which the graph calls, the `metric_query` contract, the
+sixteen-node control flow), [docs/architecture.md](docs/architecture.md) (component map, runtime
+flow), [docs/final-technical-report.md](docs/final-technical-report.md) (counts, graph, the
+conformance pass itself and what it taught) and [README.md](README.md) (a fourth rule: an approved
+metric is computed, not reconstructed).
+
+The lesson is the one this step exists to record: a design document only stays true if something
+reads it back. Nothing in the test suite could have caught any of these four, because each one was
+a gap between what the document promised and what the code was asked to do.

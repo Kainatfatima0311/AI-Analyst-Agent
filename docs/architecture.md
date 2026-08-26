@@ -31,10 +31,14 @@ runtime flow of a single question, the data model, and the deployment topology.
 │ Orchestration — agent/                                                       │
 │   graph.py         the LangGraph state graph and its policy edges            │
 │   state.py         AnalystState                                              │
-│   nodes/           intake, clarify_gate, resolve_metrics, plan, author_sql,   │
-│                    execute, interpret, materiality_check,                    │
-│                    generate_hypotheses, design_test, evaluate, reconcile,    │
-│                    synthesize, visualize, respond                            │
+│   nodes/           intake, clarify_gate, resolve_metrics, gather_context,     │
+│                    plan, compute_metrics, author_sql, execute, interpret,    │
+│                    analyse, materiality_check, generate_hypotheses,          │
+│                    design_test, evaluate, reconcile, synthesize, visualize,  │
+│                    respond                                                   │
+│   tool_loop.py     the bounded tool-calling loop used by 4 of those nodes    │
+│   distinctness.py  refuses a hypothesis that restates a sibling             │
+│   approvals.py     durable pause: expensive query, restricted column, budget │
 │   llm.py           the single Anthropic SDK entry point                      │
 │   checkpointer.py  PostgresSaver on the app_rw DSN                           │
 │   budget.py        query / token / iteration / wall-clock caps               │
@@ -43,10 +47,11 @@ runtime flow of a single question, the data model, and the deployment topology.
 ┌───────▼──────────────────────────────┐        ┌──────────▼───────────────────┐
 │ Capability — tools/                  │        │ agent state (app_rw)         │
 │   metric_lookup      → metrics/      │        │  langgraph checkpoints       │
-│   schema_inspector   ─┐              │        │  runs, run_steps             │
-│   sql_runner         ─┤→ sql_guard/  │        │  tool_calls, sql_audit       │
-│   python_analysis     │              │        │  approvals, findings         │
-│   chart_builder      ─┘              │        └──────────────────────────────┘
+│   metric_query       ─┐→ metrics/    │        │  runs, run_steps             │
+│   schema_inspector    │              │        │  tool_calls, sql_audit       │
+│   sql_runner         ─┤→ sql_guard/  │        │  approvals, findings         │
+│   python_analysis     │              │        └──────────────────────────────┘
+│   chart_builder      ─┘              │
 └───────┬──────────────────────────────┘
         │ validated SELECT only
 ┌───────▼──────────────────────────────────────────────────────────────────────┐
@@ -84,7 +89,10 @@ UI                API                  Graph                  Guard        Postg
 │                  │                    ├─ clarify_gate        │              │
 │                  │                    │   ambiguous? ──> pause, status=clarifying
 │                  │                    ├─ resolve_metrics ────────────────> metrics registry
+│                  │                    ├─ gather_context ─> schema_inspector, metric_lookup
 │                  │                    ├─ plan                │              │
+│                  │                    ├─ compute_metrics ─> metric_query ──>│ (rendered by
+│                  │                    │   answered? ──> interpret           │  the registry)
 │                  │                    ├─ author_sql          │              │
 │                  │                    ├─ sql_runner ────────>│ validate     │
 │                  │                    │                      ├─ EXPLAIN ──> │ (analyst_ro)
@@ -93,6 +101,7 @@ UI                API                  Graph                  Guard        Postg
 │                  │                    │<── rows + query_id ──┤              │
 │                  │                    ├─ write sql_audit ────────────────> │ sql_audit
 │                  │                    ├─ interpret           │              │
+│                  │                    ├─ analyse ─> python_analysis (no new query)
 │                  │                    ├─ materiality_check   │              │
 │                  │                    ├─ generate_hypotheses (>= 2)         │
 │                  │                    ├─ per hypothesis: design_test ─> sql_runner ─> evaluate

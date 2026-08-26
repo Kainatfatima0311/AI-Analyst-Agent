@@ -83,9 +83,18 @@ tiers, structured outputs, and refusal handling.
 
 ## 3. Tool inventory and contracts
 
-Five tools, each with a pydantic input model, a `strict: true` Anthropic tool schema, an executor,
+Six tools, each with a pydantic input model, a `strict: true` Anthropic tool schema, an executor,
 and a mandatory audit write. A tool that refuses returns a structured refusal — never a silent
 empty result.
+
+**Which tools the model chooses, and which the graph calls.** `sql_runner` is invoked by a node
+after `author_sql` has produced exactly one statement through structured output — deliberately
+not by the model in a loop, because one statement per turn through the guard and the audit is what
+makes the safety story deterministic. The other four (`schema_inspector`, `metric_query`,
+`python_analysis`, `chart_builder`) are offered to the model in bounded tool loops, because
+whether looking at the schema, computing a metric, deriving a further view or drawing a chart
+*helps* depends on what the data turned out to look like, and that cannot be scheduled from
+outside the run. Each loop caps its turns and offers only the tools its node names.
 
 ### 3.1 `metric_lookup`
 
@@ -134,7 +143,22 @@ Choosing an enumerated operation set over executing model-written Python is deli
 an entire class of sandbox-escape risk at the cost of some flexibility. The tradeoff is recorded in
 the final report.
 
-### 3.5 `chart_builder`
+### 3.5 `metric_query`
+
+| | |
+|---|---|
+| **Purpose** | Compute an approved metric without writing SQL for it. |
+| **Input** | `metric: str`, `dimensions: list[str] or null`, `date_from`, `date_to`, `filters: dict`, `purpose: str` |
+| **Output** | The same shape as `sql_runner`, plus the `definition_version` the figure came from and the metric's caveats. |
+| **Authority** | The registry assembles the statement from reviewed parts; every value is a bound parameter. The result still passes through `sql_guard` and still lands in `sql_audit` — a narrower door, not a bypass. |
+| **Failure** | An undeclared dimension, or a breakdown of a custom-shaped metric, is refused with the dimensions that *are* available. |
+
+This is what makes the metrics layer a guarantee rather than a lookup table. `metric_lookup`
+tells the model what a metric means; without this tool the model then wrote its own SQL for it,
+so the claim "no free text from the model reaches SQL for an approved metric" was true of the
+registry and not of the agent. Here the model supplies only **names**.
+
+### 3.6 `chart_builder`
 
 | | |
 |---|---|
@@ -184,10 +208,18 @@ prompt: nothing in `findings` may be reported with an empty `evidence_query_ids`
 intake
   +-> clarify_gate --ambiguous--> ask_human (run pauses, status=clarifying)
         +-> resolve_metrics --unapproved metric--> ask_human | flag_ad_hoc
-              +-> plan
-                    +-> author_sql -> sql_guard -> execute -> interpret
-                                        |  reject   -> repair_sql (max 2) -> author_sql
-                                        +  escalate -> request_approval (run pauses)
+              +-> gather_context  [tool loop: schema_inspector, metric_lookup]
+                    +-> plan
+                          +-> compute_metrics  [tool loop: metric_query]
+                                |  answered by an approved metric -> interpret
+                                +  something else needed
+                                      +-> author_sql -> sql_guard -> execute
+                                            |  reject   -> answer with what is established
+                                            +  escalate -> request_approval (run pauses)
+                                                              |
+                                                          interpret
+                                                              |
+                                          analyse  [tool loop: python_analysis]
                                                               |
                                                      materiality_check
    +--- not material ---------------------------------------------+
@@ -199,10 +231,17 @@ intake
    |                                                              |
    |                                                        reconcile
    |                                                              |
-   |                                  follow_up needed? --yes--> plan
+   |                              another material finding? --yes--> materiality_check
    |                                                              | no
-   +----------------------------> synthesize -> visualize -> respond
+   +--------------> synthesize -> visualize  [tool loop: chart_builder] -> respond
 ```
+
+Three of these nodes run a **bounded tool loop** rather than a single structured call, marked
+above. `author_sql` deliberately does not: it produces exactly one statement per turn through
+structured output, so exactly one statement per turn reaches the guard and the audit.
+
+Budget exhaustion at `author_sql` does not go straight to a truncated answer — it parks the run
+and asks (approval point 3). Only a refused or timed-out extension truncates.
 
 ### Rules encoded as graph edges, not prompt text
 
@@ -214,8 +253,8 @@ intake
    Refuted hypotheses are required content in the synthesis prompt.
 4. If competing hypotheses remain `inconclusive`, confidence is downgraded and the answer says so.
    The agent is not permitted to pick one arbitrarily.
-5. Budget exhaustion routes to `respond` with `status=truncated` and a partial answer — never to an
-   unsupported conclusion.
+5. Budget exhaustion asks for an extension (approval point 3) and, if refused, routes to
+   `respond` with `status=truncated` and a partial answer — never to an unsupported conclusion.
 
 ### Per-node model settings
 
@@ -362,7 +401,7 @@ The nine standards required of every project on this programme, and where each i
 | 3 | Dockerized setup that starts the required services | `docker-compose.yml` with `db`, `seed`, `api`, `ui` and healthchecks (Steps 2 and 13). Acceptance test: a clean clone plus `docker compose up`. |
 | 4 | Structured logging, agent traces, and tool call history | §9 of this document; `run_steps`, `tool_calls`, `sql_audit`; `GET /v1/runs/{id}/trace`; the UI evidence drawer (Steps 3, 9, 11). |
 | 5 | Persistent task state with recovery after errors, restarts, or delayed approval | §10; the LangGraph Postgres checkpointer (Step 7) and the durable approval pause and resume (Step 10). |
-| 6 | At least three meaningful tools | Five: `metric_lookup`, `schema_inspector`, `sql_runner`, `python_analysis`, `chart_builder` (§3, Step 6). |
+| 6 | At least three meaningful tools | Six: `metric_lookup`, `metric_query`, `schema_inspector`, `sql_runner`, `python_analysis`, `chart_builder` (§3, Step 6). |
 | 7 | Human approval for high-impact actions | §6 — four gates, no bypass flag and no blanket-approve mode (Step 10). |
 | 8 | A proper evaluation set with measurable success criteria, including failures, ambiguous tasks, and cases where the correct action is to stop or ask | §11 and [../plan.md](../plan.md) Step 12: 30+ questions in six categories, of which seven are cases where answering at all is the wrong behaviour. |
 | 9 | A final technical report | `final-technical-report.md`, Step 14: architecture, tradeoffs, limitations, security controls, evaluation results, and what production would still require. |

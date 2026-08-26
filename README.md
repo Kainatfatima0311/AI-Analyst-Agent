@@ -25,7 +25,7 @@ $env:API_PORT = "8010"; $env:UI_PORT = "8511"; docker compose up
 
 ## Why this is not a chat box over a database
 
-Three rules, and none of them live in the prompt.
+Four rules, and none of them live in the prompt.
 
 **1 · Read-only by construction, and every query checked before it runs.**
 Statements are parsed into an AST with `sqlglot` — not matched with regex, which is bypassable by
@@ -47,7 +47,14 @@ graph edge to synthesis is *unavailable*. There is nothing for a model to talk i
 hypothesis needs its own falsifying test, and two hypotheses whose tests are the same SQL are
 recorded as one — no result could separate them.
 
-**3 · Every number leads back to a query.**
+**3 · An approved metric is computed, not reconstructed.**
+Ask for revenue and the agent does not write a `sum(...)` of its own. It names the metric and the
+declared dimensions it wants; the registry — twelve reviewed YAML definitions — assembles the
+statement and binds every value as a parameter. An undeclared dimension is refused rather than
+interpolated, so for anything the registry covers **no free text from the model reaches SQL**, and
+the answer cites a definition version rather than a formula the model remembered.
+
+**4 · Every number leads back to a query.**
 A finding with no evidence is refused by a database constraint, not by a convention. The answer
 cites `query_id`s, the trace holds the statement, and the interface puts them one click apart —
 including the queries the guard **refused**, because what the agent tried is usually what a
@@ -122,7 +129,7 @@ for a human, so holding the connection open would both time out and make approva
 |---|---|
 | `src/analyst_agent/sql_guard/` | AST validation, column policy, EXPLAIN cost gate |
 | `src/analyst_agent/agent/` | the graph, its nodes, state, budget, LLM wrapper |
-| `src/analyst_agent/tools/` | metric lookup, schema inspector, SQL runner, analysis, charts |
+| `src/analyst_agent/tools/` | metric lookup, metric query, schema inspector, SQL runner, analysis, charts |
 | `src/analyst_agent/metrics/` | approved KPI registry and its YAML definitions |
 | `src/analyst_agent/api/` · `ui/` | the service and the interface |
 | `db/` | roles, schema, grants, migrations, the seed pipeline |

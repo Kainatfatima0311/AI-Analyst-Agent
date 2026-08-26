@@ -19,7 +19,7 @@ Fourteen planned steps; thirteen complete, one built but unmeasured.
 
 | | |
 |---|---|
-| Tests | **470 passing** — 51 source files, `ruff` and `mypy` clean |
+| Tests | **473 passing** — 53 source files, `ruff` and `mypy` clean |
 | Hostile queries rejected | **79 / 79**, with no database required to prove it |
 | Read-only role assertions | **29 / 29** |
 | Approved metrics | 12, each executing and each passing the guard |
@@ -36,6 +36,16 @@ The distinction matters because the two halves fail differently. A routing bug i
 repository. A weak hypothesis is a property of the model and the prompt, and would show up as an
 eval score — which is precisely the number that does not exist yet.
 
+**A conformance pass against the design document closed four gaps.** After the build was
+otherwise finished, the implementation was read back against the design rather than against
+itself, and four places had quietly settled for less than the document promised: the model had no
+way to inspect the schema even though the prompt told it to; the metrics layer was a lookup table
+the model then wrote its own SQL from; approval point 3 (budget extension) had a function and no
+caller; and hypothesis distinctness was a rubric line with nothing enforcing it. Each is now
+implemented — `gather_context`, `metric_query`, the wired budget gate, and
+`agent/distinctness.py` — and the sections below describe the built state, not the intended one.
+The lesson is that a design document only stays true if something reads it back.
+
 ---
 
 ## 2. Architecture
@@ -44,10 +54,11 @@ eval score — which is precisely the number that does not exist yet.
 Streamlit UI ──HTTP/SSE──> FastAPI ──> LangGraph agent ──> Postgres checkpointer (app_rw)
                               │             │
                               │             ├─ metric_lookup      approved KPI registry
-                              │             ├─ schema_inspector    allow-listed metadata
-                              │             ├─ sql_runner         ─┐
-                              │             ├─ python_analysis     │ every statement is
-                              │             └─ chart_builder       │ validated before it runs
+                              │             ├─ metric_query      ─┐
+                              │             ├─ schema_inspector   │ allow-listed metadata
+                              │             ├─ sql_runner         ─┤ every statement is
+                              │             ├─ python_analysis     │ validated before it runs
+                              │             └─ chart_builder       │
                               │                                    │
                               └─ runs / run_steps / tool_calls /   │
                                  sql_audit / approvals / findings  ▼
@@ -70,9 +81,23 @@ way:
 ### The graph
 
 ```
-intake → clarify_gate → resolve_metrics → plan → author_sql → execute → interpret
-       → materiality_check → generate_hypotheses → [test each] → reconcile → synthesize
+intake → clarify_gate → resolve_metrics
+       → gather_context      [tool loop: schema_inspector, metric_lookup]
+       → plan
+       → compute_metrics     [tool loop: metric_query]
+             ├─ answered by an approved metric ────────────────┐
+             └─ something else needed → author_sql → execute ──┤
+       → interpret ◄─────────────────────────────────────────── ┘
+       → analyse             [tool loop: python_analysis]
+       → materiality_check → generate_hypotheses → [test each] → reconcile
+       → synthesize → visualize [tool loop: chart_builder] → respond
 ```
+
+Sixteen nodes. Three of them run a **bounded tool loop** rather than a single structured call:
+whether looking at the schema, deriving a further view or drawing a chart helps depends on what
+the data turned out to look like, and that cannot be scheduled from outside the run. Each loop
+caps its turns and offers only the tools its node names. `author_sql` deliberately stays on the
+structured-output path, so exactly one statement per turn reaches the guard and the audit.
 
 There is **no `interpret → synthesize` edge**. Every path to an answer passes the materiality
 gate, which is what makes the multi-hypothesis requirement structural rather than aspirational.
@@ -160,6 +185,14 @@ The consequence is structural: **for an approved metric, no free text from the m
 SQL.** The model picks names, and names map to expressions a human wrote. A hostile filter value
 stays a value.
 
+That claim was false for most of the build, and worth recording as such. The registry could
+render statements from names, but nothing let the *agent* do it: `metric_lookup` returned what a
+metric means, and the model then wrote its own SQL for it. The layer was correct and unused. A
+sixth tool, `metric_query`, closes it — the model supplies a metric name, declared dimension
+names, a date window and filter values, and the registry assembles the rest. An undeclared
+dimension is refused rather than interpolated, and the rendered statement still goes through the
+guard and still lands in `sql_audit`. It is a narrower door, not a bypass.
+
 **Cost.** Two of the twelve metrics do not fit the mould — one needs a per-person subquery, one a
 window function — and carry their own statement under `shape: custom`. They are held to the same
 bar differently: every rendered metric, custom or not, is asserted to pass the guard.
@@ -181,7 +214,7 @@ repro rather than assumed.
 
 Every node is a closure over an LLM and a tool registry. This is not a testing nicety — the
 routing is where the policy lives, and routing has to be asserted deterministically rather than
-through whatever a model says on the day. It is the reason 470 tests pass with no API key, and
+through whatever a model says on the day. It is the reason 473 tests pass with no API key, and
 the reason the recovery path could be tested at all: the graph object is discarded and rebuilt
 between parking and resuming, which is what a process restart amounts to.
 
@@ -267,6 +300,14 @@ aggregation is a guard that gets disabled.
 **`--validate` caught a bug in the evaluation suite itself** on its first run:
 `corr(row_number() OVER (...), aov)` nests a window function inside an aggregate. Without that
 mode the question would have graded every future run against nothing.
+
+**A prompt that asked for something the agent could not do.** The system prompt instructed the
+model to check the schema before writing SQL, and `schema_inspector` was built, registered and
+tested — but no node ever offered it. Four of the six tools were reachable only in principle. The
+fix was three tool-calling nodes (`gather_context`, `analyse`, `visualize`) plus a bounded loop
+with a per-node allowlist. What makes this worth recording is *how* it hid: every tool had
+passing unit tests, so the test suite was green while the agent could not reach them. A tool
+inventory is not a capability until a node offers it.
 
 **One environment failure worth recording.** Mid-project the `D:` drive was deleted. It held Git
 and the Python the virtualenv was built from, so every command failed at once and the shell died
