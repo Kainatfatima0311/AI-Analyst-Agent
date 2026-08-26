@@ -14,7 +14,8 @@ rather than discovering the violation at write time.
 from __future__ import annotations
 
 import operator
-from typing import Annotated, Any, Literal, TypedDict
+from collections.abc import Callable
+from typing import Annotated, Any, Literal, TypedDict, cast
 
 RunStatus = Literal[
     "received",
@@ -26,6 +27,34 @@ RunStatus = Literal[
     "truncated",
 ]
 HypothesisStatus = Literal["proposed", "testing", "supported", "refuted", "inconclusive"]
+
+
+def merge_by_id[T: dict[str, Any]](key: str) -> Callable[[list[T] | None, list[T] | None], list[T]]:
+    """A reducer that upserts by an id field instead of appending.
+
+    ``operator.add`` is right for a log of things that happened, and wrong for anything a later
+    node has to *revise*. A hypothesis is created as `proposed` and then moved to a terminal
+    status by the node that tests it; with an append-only reducer both versions would sit in
+    state at once, and the "at least two tested hypotheses" gate would count the stale one.
+
+    This is the same shape of bug that duplicated the metric placeholders in Step 7 - which is
+    why it is fixed as a reducer here rather than worked around at each call site.
+    """
+
+    def reduce(existing: list[T] | None, incoming: list[T] | None) -> list[T]:
+        merged = list(existing or [])
+        index = {item.get(key): position for position, item in enumerate(merged)}
+        for item in incoming or []:
+            position = index.get(item.get(key))
+            if position is None:
+                index[item.get(key)] = len(merged)
+                merged.append(item)
+            else:
+                # Cast: the merge of two T dicts is a T, but the type system sees a plain dict.
+                merged[position] = cast("T", {**merged[position], **item})
+        return merged
+
+    return reduce
 TERMINAL_HYPOTHESIS_STATUSES: frozenset[str] = frozenset({"supported", "refuted", "inconclusive"})
 
 
@@ -73,6 +102,8 @@ class Hypothesis(TypedDict, total=False):
     test_query_ids: list[str]
     status: HypothesisStatus
     reasoning: str
+    test_sql: str
+    """The statement its test ran, so a sibling can be checked for testing the same thing."""
 
 
 class ChartRecord(TypedDict, total=False):
@@ -111,8 +142,10 @@ class AnalystState(TypedDict, total=False):
     resolved_metrics: Annotated[list[ResolvedMetric], operator.add]
     plan: Annotated[list[PlanStep], operator.add]
     queries: Annotated[list[QueryRecord], operator.add]
-    findings: Annotated[list[Finding], operator.add]
-    hypotheses: Annotated[list[Hypothesis], operator.add]
+    findings: Annotated[list[Finding], merge_by_id("finding_id")]
+    # Upsert rather than append: a hypothesis is revised from `proposed` to a terminal
+    # status by the node that tests it.
+    hypotheses: Annotated[list[Hypothesis], merge_by_id("hypothesis_id")]
     charts: Annotated[list[ChartRecord], operator.add]
     errors: Annotated[list[ErrorRecord], operator.add]
 
@@ -125,6 +158,10 @@ class AnalystState(TypedDict, total=False):
     # working state, not part of what a run reports; it is checkpointed like everything else, so
     # a restart mid-pair resumes correctly.
     _metric_terms: list[str]
+    _investigating_finding_id: str | None
+    _hypothesis_queue: list[str]
+    _reconciliations: Annotated[list[dict[str, Any]], operator.add]
+    _under_tested: Annotated[list[dict[str, Any]], operator.add]
     _draft: dict[str, Any] | None
     _last_result: dict[str, Any] | None
     _needs_more_data: bool

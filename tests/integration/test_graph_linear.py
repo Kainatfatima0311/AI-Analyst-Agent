@@ -40,7 +40,10 @@ REVENUE_SQL = (
 def script(
     answerable: bool = True,
     sql: str = REVENUE_SQL,
-    material: bool = True,
+    # Not material by default: these tests are about the linear path. A material finding now
+    # commits the run to the investigation loop, which is exercised in test_multi_hypothesis.py
+    # with a script that actually has explanations in it.
+    material: bool = False,
     metric_terms: list[str] | None = None,
 ) -> dict[type, list[Any]]:
     return {
@@ -115,6 +118,8 @@ def test_a_question_runs_end_to_end(graph_for, rw_dsn: str, seeded: None) -> Non
         assert state["answer"]["confidence"] == "medium"
 
         trace = repo.get_trace(uuid.UUID(state["run_id"]))
+        # Every path to an answer goes through the materiality gate, even one with nothing
+        # material to explain - that is what makes the gate impossible to route around.
         assert [s["node"] for s in trace["steps"]] == [
             "intake",
             "clarify_gate",
@@ -123,6 +128,7 @@ def test_a_question_runs_end_to_end(graph_for, rw_dsn: str, seeded: None) -> Non
             "author_sql",
             "execute",
             "interpret",
+            "materiality_check",
             "synthesize",
         ]
         assert trace["summary"]["queries_executed"] == 1

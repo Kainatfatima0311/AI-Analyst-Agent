@@ -55,6 +55,11 @@ class StepHandle:
     seq: int
     node: str
     started_monotonic: float = field(default_factory=time.monotonic)
+    finished: bool = False
+    """Set once the step has been closed, so the ``step`` context manager does not close it
+    again. Without this, a node that recorded its own summary had that summary overwritten with
+    NULL by the automatic close on the way out - silently emptying the one human-readable
+    column in the whole trace."""
 
     @property
     def elapsed_ms(self) -> int:
@@ -153,6 +158,7 @@ def finish_step(
     usage: Usage | None = None,
 ) -> None:
     usage = usage or Usage()
+    handle.finished = True
     with rw_conn() as conn, conn.cursor() as cur:
         cur.execute(
             "UPDATE agent.run_steps SET status = %s, summary = %s, error = %s, "
@@ -184,6 +190,8 @@ def step(run_id: uuid.UUID, node: str, effort: str | None = None, attempt: int =
         try:
             yield handle
         except Exception as exc:
+            # An error closes the step even if the node already closed it: how a step ended
+            # matters more than the summary it managed to write before failing.
             finish_step(
                 handle,
                 status="error",
@@ -192,7 +200,10 @@ def step(run_id: uuid.UUID, node: str, effort: str | None = None, attempt: int =
             log.error("node failed", error=str(exc), error_type=type(exc).__name__)
             raise
         else:
-            finish_step(handle, status="ok")
+            # Only if the node did not close it itself. A node that recorded a summary has
+            # already said something more useful than "ok".
+            if not handle.finished:
+                finish_step(handle, status="ok")
             log.debug("node finished", duration_ms=handle.elapsed_ms)
 
 

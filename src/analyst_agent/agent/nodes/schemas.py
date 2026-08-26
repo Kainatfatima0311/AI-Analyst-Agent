@@ -155,3 +155,89 @@ class Synthesis(BaseModel):
             "of the answer, not an appendix to it."
         ),
     )
+
+
+# --- the investigation loop -------------------------------------------------
+
+
+class HypothesisOut(BaseModel):
+    """One candidate explanation, with the test that could kill it."""
+
+    model_config = {"extra": "forbid"}
+
+    statement: str = Field(
+        description=(
+            "A specific, checkable explanation. 'Seasonality' is not one; 'the same month was "
+            "flat last year, so this is not seasonal' is the shape of a testable claim."
+        )
+    )
+    test_design: str = Field(
+        description=(
+            "The query you would run to test it, described in words. It must be able to come "
+            "back *against* you - a test that cannot fail is not a test."
+        )
+    )
+    distinguishing_signal: str = Field(
+        description=(
+            "What would be true if THIS explanation is the cause and the others are not. Two "
+            "hypotheses whose signals are the same are one hypothesis written twice, and will "
+            "be rejected."
+        )
+    )
+
+
+class HypothesisSet(BaseModel):
+    """Competing explanations for one material finding."""
+
+    model_config = {"extra": "forbid"}
+
+    hypotheses: list[HypothesisOut] = Field(
+        description=(
+            "At least two genuinely different explanations. Include the one you think is most "
+            "likely AND at least one you think is less likely but cannot yet rule out. Do not "
+            "pad the list with restatements of the same idea."
+        )
+    )
+    reasoning: str = Field(description="Why these, and what else you considered and dropped.")
+
+
+class HypothesisEvaluation(BaseModel):
+    """What the test actually showed."""
+
+    model_config = {"extra": "forbid"}
+
+    status: Literal["supported", "refuted", "inconclusive"] = Field(
+        description=(
+            "supported: the data is what this explanation predicts and not what the others "
+            "predict. refuted: the data contradicts it. inconclusive: the test could not "
+            "separate this from another explanation. Do not report inconclusive as supported."
+        )
+    )
+    reasoning: str = Field(
+        description="What in the result led to this, with the numbers. One or two sentences."
+    )
+
+
+class Reconciliation(BaseModel):
+    """Which explanation survived, and what that means for confidence."""
+
+    model_config = {"extra": "forbid"}
+
+    conclusion: str = Field(
+        description="What actually explains the finding, given everything that was tested."
+    )
+    refuted: list[str] = Field(
+        description=(
+            "Each explanation you ruled out and why. This is part of the answer, not an "
+            "appendix: naming what you disproved is how a reader knows you looked."
+        )
+    )
+    confidence: Literal["high", "medium", "low"] = Field(
+        description=(
+            "Downgrade when competing explanations remain inconclusive. If two survive and you "
+            "cannot separate them, that is 'low' and you say both."
+        )
+    )
+    needs_follow_up: bool = Field(
+        description="True only if a further query would change the conclusion, not merely add detail."
+    )

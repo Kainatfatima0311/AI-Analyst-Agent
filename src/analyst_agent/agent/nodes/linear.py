@@ -34,6 +34,9 @@ from analyst_agent.tools.registry import ToolRegistry, get_tool_registry
 
 log = get_logger(__name__)
 
+NEWLINE = chr(10)
+PARAGRAPH = NEWLINE * 2
+
 # Return type is Any rather than dict: LangGraph's add_node overloads accept
 # Callable[[State], Any], and a narrower alias does not match any of them.
 Node = Callable[[AnalystState], Any]
@@ -446,10 +449,35 @@ def make_synthesize(ctx: NodeContext) -> Node:
         truncated = state.get("truncation_reason")
 
         instruction = "Write the answer to the question."
+
+        reconciliations = state.get("_reconciliations") or []
+        if reconciliations:
+            established = NEWLINE.join(
+                f"- {r['conclusion']} (confidence {r['confidence']})"
+                + (f"; ruled out: {'; '.join(r['refuted'])}" if r.get("refuted") else "")
+                for r in reconciliations
+            )
+            instruction += (
+                PARAGRAPH + "What the investigation established:" + NEWLINE + established
+                + PARAGRAPH + "Carry the ruled-out explanations into your answer. Naming "
+                "what you disproved is part of the answer, not an appendix to it."
+            )
+
+        under_tested = state.get("_under_tested") or []
+        if under_tested:
+            unexplained = NEWLINE.join(
+                f"- {u['statement']} ({u['reason']})" for u in under_tested
+            )
+            instruction += (
+                PARAGRAPH + "Not fully explained:" + NEWLINE + unexplained
+                + PARAGRAPH + "Say plainly that these were not explained. Do not present "
+                "them as if they were."
+            )
+
         if truncated:
             instruction += (
-                f" The investigation was cut short: {truncated}. Say so, report only what you "
-                "established, and set confidence accordingly."
+                PARAGRAPH + f"The investigation was cut short: {truncated}. Say so, report "
+                "only what you established, and set confidence accordingly."
             )
 
         with repo.step(run_id, "synthesize", effort=ctx.settings.effort_reason) as handle:
@@ -465,12 +493,39 @@ def make_synthesize(ctx: NodeContext) -> Node:
             # would otherwise produce an answer whose evidence link goes nowhere.
             executed = set(executed_query_ids(state))
             cited = [q for q in synthesis.evidence_query_ids if q in executed]
+
+            # The answer cannot be more confident than the investigation that produced it: the
+            # reconciliation already capped confidence against what the tests separated, and an
+            # unexplained material finding caps it again. Asked-for confidence is an input here,
+            # not the last word.
+            order = {"low": 0, "medium": 1, "high": 2}
+            ceiling = min(
+                (r["confidence"] for r in reconciliations),
+                key=lambda c: order[c],
+                default="high",
+            )
+            if under_tested and order[ceiling] > order["medium"]:
+                ceiling = "medium"
+            confidence: str = synthesis.confidence
+            if order[confidence] > order[ceiling]:
+                log.info("answer confidence capped", claimed=confidence, capped=ceiling)
+                confidence = ceiling
+
+            caveats = list(synthesis.caveats)
+            caveats.extend(
+                f"{u['statement']} was not fully explained: {u['reason']}" for u in under_tested
+            )
+
+            refuted = list(synthesis.refuted)
+            for reconciliation in reconciliations:
+                refuted.extend(r for r in reconciliation.get("refuted", []) if r not in refuted)
+
             answer = {
                 "conclusion": synthesis.conclusion,
-                "confidence": synthesis.confidence,
-                "caveats": list(synthesis.caveats),
+                "confidence": confidence,
+                "caveats": caveats,
                 "evidence": [{"query_id": q} for q in cited],
-                "refuted": list(synthesis.refuted),
+                "refuted": refuted,
             }
             status = "truncated" if truncated else "completed"
             repo.finish_run(run_id, status, answer=answer)

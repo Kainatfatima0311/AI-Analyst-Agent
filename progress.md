@@ -16,8 +16,8 @@ Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known is
 | 5 | Metrics layer (approved KPI definitions) | ✅ | 2026-08-25 | `feat(metrics)` |
 | 6 | The five tools | ✅ | 2026-08-25 | `feat(tools)` |
 | 7 | LangGraph state, checkpointer, LLM wrapper | ✅ | 2026-08-26 | `feat(agent)` / `v0.3-agent-walking-skeleton` |
-| 8 | Multi-hypothesis investigation loop | 🟨 | — | — |
-| 9 | FastAPI business question API | ⬜ | — | — |
+| 8 | Multi-hypothesis investigation loop | ✅ | 2026-08-26 | `feat(agent)` / `v0.4-investigation` |
+| 9 | FastAPI business question API | 🟨 | — | — |
 | 10 | Human approval gates and recovery | ⬜ | — | — |
 | 11 | Streamlit analyst interface | ⬜ | — | — |
 | 12 | Evaluation suite (≥30 questions) | ⬜ | — | — |
@@ -34,6 +34,7 @@ Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known is
 | Ambiguous questions correctly deferred to a human | ≥ 90% | — | — |
 | Unit + integration test coverage | ≥ 80% | — | — |
 | Hostile queries rejected | 100% | 79/79 | Step 4 |
+| Material findings reaching an answer untested | 0 | 0 | Step 8 — enforced by a graph edge |
 
 ---
 
@@ -534,3 +535,79 @@ but "it works against the live API" is not yet established, and is not claimed. 
    alias** — verified empirically with a minimal repro: the same call type-checks with an inline
    `def` and fails with an aliased one. Since the nodes come from factories by design, this is
    handled with a single documented ignore in one helper rather than eight scattered ones.
+
+### Step 8 — Multi-hypothesis investigation loop
+
+**Status:** OK Done - 2026-08-26 - Tag: `v0.4-investigation`
+
+**Built**
+- `agent/nodes/investigate.py` - `materiality_check`, `generate_hypotheses`, `test_hypothesis`,
+  `reconcile`.
+- `agent/distinctness.py` - two checks for "this is the same hypothesis written twice".
+- `agent/nodes/schemas.py` - `HypothesisSet`, `HypothesisEvaluation`, `Reconciliation`.
+- `db/migrations/002_inconclusive_needs_no_test.sql`.
+- Graph rewired: the `interpret -> synthesize` edge is **gone**. Every path to an answer now
+  goes through the materiality gate.
+
+**The gate**
+While a material finding has fewer than two hypotheses in a terminal state, the route to
+synthesis is *unavailable* - the only edge out of `materiality_check` goes to hypothesis
+generation. That is why the requirement lives in the graph rather than the prompt: there is
+nothing here for a model to talk its way past. `synthesis_is_blocked()` exposes the same rule as
+a predicate so it can be asserted directly, not only through whichever path the graph took.
+
+**Distinctness: what is enforced, and what is not**
+Two hypotheses that predict the same thing are one hypothesis, and testing both looks like rigour
+while establishing nothing. Two checks, and they are honest about their reach:
+
+- A lexical check on each hypothesis's declared `distinguishing_signal`, applied at generation.
+  It catches near-verbatim restatements **and nothing more** - it scores "review scores fell"
+  against "customer satisfaction ratings declined" at zero. There is a test asserting that
+  limitation, so nobody later mistakes it for a paraphrase detector.
+- The check that actually holds: two hypotheses whose tests normalise to the **same SQL** are the
+  same hypothesis whatever they are called, because no result could separate them. The second is
+  marked inconclusive and never executed.
+
+**Confidence is capped, not requested**
+`reconcile` asks the model for a confidence and then lowers it against what the tests established:
+more than one explanation still supported caps at `low`; a competing explanation left
+inconclusive caps at `medium`. `synthesize` caps again on the same basis, and once more if a
+material finding was left unexplained. The node can only lower it.
+
+**The loop guard**
+A finding for which the model cannot produce two *distinct* explanations would otherwise be
+picked again on every pass, generating duplicates forever. Once a finding has as many hypotheses
+as it is allowed and still lacks two tested ones, the investigation moves on and the answer must
+say the finding was not fully explained rather than presenting it as if it were.
+
+**Verification**
+- `pytest tests/unit/test_distinctness.py` - 11 passed.
+- `pytest tests/integration/test_multi_hypothesis.py` - 11 passed: the gate predicate on its own
+  (a proposed hypothesis does not open it; one tested is not enough; a *refutation* counts,
+  because the point is that the alternative was tested, not that it won), then the loop end to
+  end - both explanations tested, the refuted one reaching the answer, an inconclusive
+  alternative downgrading confidence to `medium`, two survivors capping it at `low`, a duplicate
+  rejected at generation, and two explanations sharing one test query where the second is marked
+  inconclusive and never runs.
+- Full suite: **393 passed**. ruff clean, mypy clean (44 files).
+
+**A constraint that was slightly too broad**
+`hypotheses_require_a_test` demanded a query for any status other than `proposed`. The first real
+run of the loop hit it: a hypothesis whose test would duplicate a sibling's is `inconclusive` and
+has, correctly, no query of its own. Demanding one forces either a misrepresentation (attach
+someone else's query) or leaves the hypothesis at `proposed`, which blocks the synthesis gate
+permanently. Migration 002 narrows it - a query is required for a verdict that *claims* something
+(`supported`, `refuted`) and not for one that declines to - and adds a constraint that an
+`inconclusive` verdict must carry a stated reason.
+
+**A real bug the loop surfaced**
+`repo.step` closed the step on the way out even when the node had already closed it, overwriting
+the node's summary with NULL. Every node summary written since Step 3 was being silently
+discarded - emptying the one human-readable column in the trace, which is most of what makes a
+run reviewable. Fixed, with two regression tests.
+
+**Environment note**
+Mid-step the `D:` drive was deleted. It held Git and the Python the venv was built from, so every
+command failed at once. Recovered by rebuilding the venv from `C:\ProgramData\miniconda3` (same
+3.13.5) and reinstalling Git to `K:\software\Git`; 17 dead `D:` PATH entries removed. No repo
+history was lost. Six loop tests written just before the shell died had to be rewritten.

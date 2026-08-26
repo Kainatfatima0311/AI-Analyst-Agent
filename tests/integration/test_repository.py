@@ -191,6 +191,32 @@ def test_a_failing_node_is_recorded_and_re_raised(run_id: uuid.UUID) -> None:
     assert trace["steps"][0]["error"]["message"] == "boom"
 
 
+def test_a_summary_written_by_a_node_survives_the_step_closing(run_id: uuid.UUID) -> None:
+    """Regression: the context manager used to close an already-closed step on the way out,
+    overwriting the node's summary with NULL. That silently emptied the one human-readable
+    column in the whole trace, which is most of what makes a run reviewable."""
+    with repo.step(run_id, "interpret") as handle:
+        repo.finish_step(handle, summary="revenue fell 32% in 2018-03", usage=repo.Usage(10, 5))
+
+    step = repo.get_trace(run_id)["steps"][0]
+    assert step["summary"] == "revenue fell 32% in 2018-03"
+    assert step["status"] == "ok"
+    assert step["tokens_in"] == 10
+
+
+def test_a_failing_node_records_the_error_even_after_writing_a_summary(
+    run_id: uuid.UUID,
+) -> None:
+    """How a step ended matters more than the summary it managed to write before failing."""
+    with pytest.raises(RuntimeError), repo.step(run_id, "author_sql") as handle:
+        repo.finish_step(handle, summary="looked fine at this point")
+        raise RuntimeError("then it did not")
+
+    step = repo.get_trace(run_id)["steps"][0]
+    assert step["status"] == "error"
+    assert step["error"]["message"] == "then it did not"
+
+
 def test_usage_accumulates_on_the_run(run_id: uuid.UUID) -> None:
     repo.add_run_usage(run_id, repo.Usage(1000, 200, 800, 0.01), queries=1, iterations=1)
     repo.add_run_usage(run_id, repo.Usage(500, 100, 400, 0.005), queries=2, iterations=1)

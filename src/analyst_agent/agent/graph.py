@@ -38,8 +38,20 @@ from analyst_agent.agent.nodes import (
     make_resolve_metrics,
     make_synthesize,
 )
+from analyst_agent.agent.nodes.investigate import (
+    MIN_HYPOTHESES,
+    make_generate_hypotheses,
+    make_materiality_check,
+    make_reconcile,
+    make_test_hypothesis,
+)
 from analyst_agent.agent.nodes.linear import Node
-from analyst_agent.agent.state import AnalystState, initial_state
+from analyst_agent.agent.state import (
+    AnalystState,
+    initial_state,
+    material_findings,
+    tested_hypotheses,
+)
 from analyst_agent.config import Settings
 from analyst_agent.db import repository as repo
 from analyst_agent.observability.logging import bound, get_logger
@@ -66,9 +78,65 @@ def _after_execute(state: AnalystState) -> str:
         return END
     if state.get("_last_result"):
         return "interpret"
-    # A rejected statement or a tool error: go and answer with what is established rather than
-    # retrying blindly. Step 8 adds the repair path.
+    # A rejected statement or a tool error: answer with what is established rather than
+    # retrying blindly.
     return "synthesize"
+
+
+def _after_materiality(state: AnalystState) -> str:
+    """**The gate the whole project is built around.**
+
+    While a material finding has fewer than two hypotheses in a terminal state, the route to
+    synthesis is *unavailable* - the only edge out of here goes to hypothesis generation. This
+    is why the requirement is enforced in the graph rather than asked for in the prompt: there
+    is nothing here for a model to talk its way past.
+
+    `materiality_check` sets `_investigating_finding_id` only when such a finding exists and the
+    budget still allows the work, so this edge reads a fact rather than re-deciding it.
+    """
+    if state.get("truncation_reason"):
+        return "synthesize"
+    return "generate_hypotheses" if state.get("_investigating_finding_id") else "synthesize"
+
+
+def _after_hypotheses(state: AnalystState) -> str:
+    """With nothing to test, reconciling would be theatre - go and answer."""
+    if state.get("truncation_reason"):
+        return "synthesize"
+    return "test_hypothesis" if state.get("_hypothesis_queue") else "reconcile"
+
+
+def _after_test(state: AnalystState) -> str:
+    """Keep testing while the queue holds, then reconcile what came back."""
+    if state.get("truncation_reason"):
+        return "synthesize"
+    return "test_hypothesis" if state.get("_hypothesis_queue") else "reconcile"
+
+
+def _after_reconcile(state: AnalystState) -> str:
+    """Back to the gate, which decides whether another finding still needs explaining."""
+    return "synthesize" if state.get("truncation_reason") else "materiality_check"
+
+
+def synthesis_is_blocked(state: AnalystState) -> tuple[bool, str | None]:
+    """Whether the gate would currently refuse to let this run conclude.
+
+    Exposed as a function rather than left inside the edge so that a test can assert the rule
+    directly - "a material finding cannot reach synthesis untested" is a claim worth checking on
+    its own, not only through whichever path the graph happened to take.
+    """
+    for finding in material_findings(state):
+        tested = tested_hypotheses(state, finding["finding_id"])
+        if len(tested) < MIN_HYPOTHESES:
+            already_flagged = any(
+                u["finding_id"] == finding["finding_id"] for u in state.get("_under_tested", [])
+            )
+            if not already_flagged:
+                return True, (
+                    f"{finding['statement'][:80]!r} is material and has {len(tested)} of "
+                    f"{MIN_HYPOTHESES} tested explanations"
+                )
+    return False, None
 
 
 def _add_node(builder: StateGraph, name: str, node: Node) -> None:
@@ -106,6 +174,10 @@ def build_graph(
         ("author_sql", make_author_sql),
         ("execute", make_execute),
         ("interpret", make_interpret),
+        ("materiality_check", make_materiality_check),
+        ("generate_hypotheses", make_generate_hypotheses),
+        ("test_hypothesis", make_test_hypothesis),
+        ("reconcile", make_reconcile),
         ("synthesize", make_synthesize),
     ):
         _add_node(builder, name, factory(ctx))
@@ -117,7 +189,14 @@ def build_graph(
     builder.add_edge("plan", "author_sql")
     builder.add_conditional_edges("author_sql", _after_author)
     builder.add_conditional_edges("execute", _after_execute)
-    builder.add_edge("interpret", "synthesize")
+
+    # The investigation loop. Note there is no `interpret -> synthesize` edge any more: every
+    # path to an answer now goes through the materiality gate.
+    builder.add_edge("interpret", "materiality_check")
+    builder.add_conditional_edges("materiality_check", _after_materiality)
+    builder.add_conditional_edges("generate_hypotheses", _after_hypotheses)
+    builder.add_conditional_edges("test_hypothesis", _after_test)
+    builder.add_conditional_edges("reconcile", _after_reconcile)
     builder.add_edge("synthesize", END)
 
     return builder.compile(checkpointer=checkpointer if checkpointer is not None else get_checkpointer())
