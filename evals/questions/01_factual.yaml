@@ -1,0 +1,119 @@
+# Single-metric factual questions.
+#
+# What these measure: calculation accuracy. Each carries a hand-written reference query, and the
+# agent's number is compared against it. The agent never sees the reference.
+#
+# Several are deliberately phrased the way a person would ask rather than the way the metric is
+# named, because resolving "sales" to the approved revenue definition is part of what is
+# being tested.
+
+- id: fac001
+  question: What was total net revenue in 2018?
+  category: factual
+  expected_behavior: >
+    Resolves "net revenue" to the approved revenue metric, excludes cancelled orders, and states
+    the figure with the definition it used.
+  expected_metrics: [revenue]
+  ground_truth_sql: |
+    SELECT sum(oi.price) AS value
+    FROM analytics.orders o
+    JOIN analytics.order_items oi ON oi.order_id = o.order_id
+    WHERE o.order_status <> 'canceled'
+      AND o.order_purchase_timestamp >= '2018-01-01'
+      AND o.order_purchase_timestamp < '2019-01-01'
+
+- id: fac002
+  question: How many orders did we take in March 2018?
+  category: factual
+  expected_behavior: Counts distinct orders, not item lines, and excludes cancellations.
+  expected_metrics: [orders]
+  ground_truth_sql: |
+    SELECT count(DISTINCT o.order_id) AS value
+    FROM analytics.orders o
+    JOIN analytics.order_items oi ON oi.order_id = o.order_id
+    WHERE o.order_status <> 'canceled'
+      AND o.order_purchase_timestamp >= '2018-03-01'
+      AND o.order_purchase_timestamp < '2018-04-01'
+
+- id: fac003
+  question: What is our average order value over the whole period?
+  category: factual
+  expected_behavior: >
+    Computes a ratio of sums rather than an average of per-order averages, which would weight a
+    small order equally with a large one.
+  expected_metrics: [aov]
+  tolerance: 0.02
+  ground_truth_sql: |
+    SELECT sum(oi.price) / NULLIF(count(DISTINCT o.order_id), 0) AS value
+    FROM analytics.orders o
+    JOIN analytics.order_items oi ON oi.order_id = o.order_id
+    WHERE o.order_status <> 'canceled'
+
+- id: fac004
+  question: What share of orders were cancelled in March 2018?
+  category: factual
+  expected_behavior: >
+    Keeps cancelled orders in the denominator - they are the subject of this metric, not an
+    exclusion.
+  expected_metrics: [cancellation_rate]
+  tolerance: 0.02
+  ground_truth_sql: |
+    SELECT avg(CASE WHEN o.order_status = 'canceled' THEN 1.0 ELSE 0.0 END) AS value
+    FROM analytics.orders o
+    WHERE o.order_purchase_timestamp >= '2018-03-01'
+      AND o.order_purchase_timestamp < '2018-04-01'
+
+- id: fac005
+  question: What was our on-time delivery rate in 2017?
+  category: factual
+  expected_behavior: >
+    Counts delivered orders only. An order still in transit is not late yet, and including it
+    would make the figure drift with whatever is currently open.
+  expected_metrics: [on_time_delivery_rate]
+  tolerance: 0.02
+  ground_truth_sql: |
+    SELECT avg(CASE WHEN o.order_delivered_customer_date <= o.order_estimated_delivery_date
+                    THEN 1.0 ELSE 0.0 END) AS value
+    FROM analytics.orders o
+    WHERE o.order_status = 'delivered'
+      AND o.order_delivered_customer_date IS NOT NULL
+      AND o.order_purchase_timestamp >= '2017-01-01'
+      AND o.order_purchase_timestamp < '2018-01-01'
+
+- id: fac006
+  question: What is the average review score across all reviewed orders?
+  category: factual
+  expected_behavior: >
+    States the figure and notes that reviewing is voluntary, so the sample is self-selected.
+  expected_metrics: [avg_review_score]
+  tolerance: 0.02
+  ground_truth_sql: |
+    SELECT avg(r.review_score::numeric) AS value
+    FROM analytics.reviews r
+    JOIN analytics.orders o ON o.order_id = r.order_id
+
+- id: fac007
+  question: How many distinct people have bought from us?
+  category: factual
+  expected_behavior: >
+    Counts customer_unique_id, not customer_id - the latter is per order and would make every
+    customer look new. Counting it is permitted; returning one row per person is not.
+  tolerance: 0.001
+  ground_truth_sql: |
+    SELECT count(DISTINCT c.customer_unique_id) AS value
+    FROM analytics.customers c
+
+- id: fac008
+  question: How many days does an order take to arrive on average?
+  category: factual
+  expected_behavior: >
+    Delivered orders only, and pairs the mean with the caveat that a few very late orders move
+    it.
+  expected_metrics: [avg_delivery_days]
+  tolerance: 0.02
+  ground_truth_sql: |
+    SELECT avg(EXTRACT(EPOCH FROM
+           (o.order_delivered_customer_date - o.order_purchase_timestamp)) / 86400.0) AS value
+    FROM analytics.orders o
+    WHERE o.order_status = 'delivered'
+      AND o.order_delivered_customer_date IS NOT NULL

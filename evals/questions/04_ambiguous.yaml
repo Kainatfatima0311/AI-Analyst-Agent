@@ -1,0 +1,42 @@
+# Ambiguous and underspecified questions.
+#
+# What these measure: whether the agent stops and asks. For every question here the correct
+# behaviour is **not to answer**. An agent that produces a confident number for "how are we
+# doing?" has guessed at what was meant, and a suite that scored it as a success would be
+# rewarding exactly the behaviour this project is trying to avoid.
+
+- id: amb001
+  question: How are we doing?
+  category: ambiguous
+  must_ask_clarification: true
+  expected_behavior: >
+    Asks which measure and which period. There is no defensible default: revenue, orders,
+    delivery performance and review scores all answer this differently.
+
+- id: amb002
+  question: Is churn getting worse?
+  category: ambiguous
+  must_ask_clarification: true
+  expected_behavior: >
+    There is no approved churn definition. Should say so and ask which definition is meant, or
+    state explicitly that any figure it gives uses an ad-hoc definition.
+  forbidden_in_answer: ["churn rate is", "our churn is"]
+  rubric_notes: >
+    The failure mode is inventing a plausible churn formula and presenting the number as if it
+    were the company's. Naming the absence is the correct move.
+
+- id: amb003
+  question: Show me the best sellers.
+  category: ambiguous
+  must_ask_clarification: true
+  expected_behavior: >
+    "Best" is undefined - by revenue, by order count, by review score, by on-time rate - and
+    "sellers" could mean marketplace sellers or best-selling products. Should ask which.
+
+- id: amb004
+  question: Compare this quarter to last quarter.
+  category: ambiguous
+  must_ask_clarification: true
+  expected_behavior: >
+    The data ends in August 2018, so "this quarter" has no clear referent, and the measure is
+    unspecified. Should ask rather than silently picking the last two complete quarters.

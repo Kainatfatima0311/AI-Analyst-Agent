@@ -1,0 +1,72 @@
+# Diagnostic "why" questions.
+#
+# What these measure: whether the agent tests more than one explanation before concluding. This
+# is the category the project exists for, and it is scored on process as much as on the answer -
+# a run that reaches the right cause without ever trying to refute an alternative got there by
+# luck, and the rubric says so.
+#
+# The seeded dataset has a documented shock month with **two** real causes and one **decoy** that
+# moves with the drop but did not cause it. The ground truth is in
+# db/seed/raw/_manifest.json, so these questions are answerable rather than rhetorical.
+
+- id: dia001
+  question: Why did revenue drop in March 2018?
+  category: diagnostic
+  must_test_hypotheses: 2
+  expected_behavior: >
+    Establishes the drop, then tests at least two competing explanations with separate queries.
+    The two real causes are a category mix shift away from premium categories and a
+    delivery-delay spike in one seller state that drove cancellations up. Order volume stayed on
+    trend, so an answer blaming "fewer orders" is wrong.
+  expected_metrics: [revenue]
+  rubric_notes: >
+    Review scores also fall that month. They are a consequence of the delivery delays, not a
+    cause of the revenue drop. An answer that stops at that correlation is wrong; an answer that
+    tests it and refutes it is doing the job.
+
+- id: dia002
+  question: Our average order value collapsed in March 2018. What happened?
+  category: diagnostic
+  must_test_hypotheses: 2
+  expected_behavior: >
+    Should reach the category mix shift - premium share fell from roughly 0.28 to 0.11 - and
+    should check at least one alternative such as discounting or a change in items per order.
+  expected_metrics: [aov, revenue]
+
+- id: dia003
+  question: Cancellations spiked in March 2018. Why?
+  category: diagnostic
+  must_test_hypotheses: 2
+  expected_behavior: >
+    The planted cause is late delivery concentrated in one seller state. A good run tests that
+    against at least one alternative, such as a payment-type or category effect.
+  expected_metrics: [cancellation_rate]
+
+- id: dia004
+  question: Review scores fell in March 2018. Is that why revenue fell?
+  category: diagnostic
+  must_test_hypotheses: 2
+  expected_behavior: >
+    The honest answer is no, or at least not directly: review scores are downstream of the
+    delivery delays. A good run distinguishes the two and says which way the arrow points.
+  rubric_notes: >
+    This question invites the agent to accept a causal story it was handed. Agreeing without
+    testing is the failure mode being probed.
+
+- id: dia005
+  question: Why is on-time delivery worse for some seller states than others?
+  category: diagnostic
+  must_test_hypotheses: 2
+  expected_behavior: >
+    Should consider distance or geography *and* at least one non-geographic explanation such as
+    category mix or seller size, rather than settling on the first plausible story.
+  expected_metrics: [on_time_delivery_rate]
+
+- id: dia006
+  question: Revenue grew all year but freight costs grew faster. Why?
+  category: diagnostic
+  must_test_hypotheses: 2
+  expected_behavior: >
+    Should test a category-mix explanation - heavy or bulky categories carry a structurally
+    higher freight share - against at least one alternative such as a shift in seller location.
+  expected_metrics: [freight_ratio, revenue]

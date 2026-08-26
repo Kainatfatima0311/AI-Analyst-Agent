@@ -1,0 +1,137 @@
+# Comparison, trend and segmentation questions.
+#
+# What these measure: multi-step correctness. Each needs at least a join and a grouping, and
+# several have a trap - a fan-out that double counts, or a period boundary that is easy to get
+# off by one.
+
+- id: cmp001
+  question: How did revenue in March 2018 compare with February 2018?
+  category: comparison
+  expected_behavior: >
+    Reports both figures and the change between them, not just the direction.
+  expected_metrics: [revenue]
+  ground_truth_sql: |
+    SELECT sum(oi.price) FILTER (
+             WHERE o.order_purchase_timestamp >= '2018-03-01'
+               AND o.order_purchase_timestamp < '2018-04-01')
+           / NULLIF(sum(oi.price) FILTER (
+             WHERE o.order_purchase_timestamp >= '2018-02-01'
+               AND o.order_purchase_timestamp < '2018-03-01'), 0) - 1 AS value
+    FROM analytics.orders o
+    JOIN analytics.order_items oi ON oi.order_id = o.order_id
+    WHERE o.order_status <> 'canceled'
+  tolerance: 0.03
+
+- id: cmp002
+  question: Which product category earned the most revenue in 2018?
+  category: comparison
+  expected_behavior: Names the category and gives its revenue, ideally with the runner-up.
+  expected_metrics: [revenue]
+  ground_truth_sql: |
+    SELECT sum(oi.price) AS value
+    FROM analytics.orders o
+    JOIN analytics.order_items oi ON oi.order_id = o.order_id
+    JOIN analytics.products p ON p.product_id = oi.product_id
+    WHERE o.order_status <> 'canceled'
+      AND o.order_purchase_timestamp >= '2018-01-01'
+    GROUP BY p.product_category_name
+    ORDER BY value DESC
+    LIMIT 1
+
+- id: cmp003
+  question: Which customer state generates the most revenue?
+  category: comparison
+  expected_behavior: Joins customers to orders and aggregates; does not confuse seller state with customer state.
+  expected_metrics: [revenue]
+  ground_truth_sql: |
+    SELECT sum(oi.price) AS value
+    FROM analytics.orders o
+    JOIN analytics.order_items oi ON oi.order_id = o.order_id
+    JOIN analytics.customers c ON c.customer_id = o.customer_id
+    WHERE o.order_status <> 'canceled'
+    GROUP BY c.customer_state
+    ORDER BY value DESC
+    LIMIT 1
+
+- id: cmp004
+  question: Is average order value trending up or down over 2018?
+  category: comparison
+  expected_behavior: >
+    Looks at the series month by month rather than comparing only the first and last points,
+    and says what the trend is.
+  expected_metrics: [aov]
+  tolerance: 0.05
+  # The ranking is computed in its own step: a window function cannot sit inside an aggregate,
+  # so corr(row_number() OVER (...), aov) is not valid SQL.
+  ground_truth_sql: |
+    WITH monthly AS (
+      SELECT to_char(o.order_purchase_timestamp, 'YYYY-MM') AS ym,
+             sum(oi.price) / NULLIF(count(DISTINCT o.order_id), 0) AS aov
+      FROM analytics.orders o
+      JOIN analytics.order_items oi ON oi.order_id = o.order_id
+      WHERE o.order_status <> 'canceled'
+        AND o.order_purchase_timestamp >= '2018-01-01'
+      GROUP BY 1
+    ), ordered AS (
+      SELECT row_number() OVER (ORDER BY ym) AS position, aov FROM monthly
+    )
+    SELECT corr(position, aov) AS value FROM ordered
+
+- id: cmp005
+  question: What share of revenue comes from our ten largest sellers?
+  category: comparison
+  expected_behavior: Uses the approved concentration metric rather than inventing a cut-off.
+  expected_metrics: [seller_concentration]
+  tolerance: 0.03
+  ground_truth_sql: |
+    WITH seller_revenue AS (
+      SELECT oi.seller_id, sum(oi.price) AS revenue
+      FROM analytics.orders o
+      JOIN analytics.order_items oi ON oi.order_id = o.order_id
+      WHERE o.order_status <> 'canceled'
+      GROUP BY 1
+    ), ranked AS (
+      SELECT revenue, row_number() OVER (ORDER BY revenue DESC) AS rank,
+             sum(revenue) OVER () AS total
+      FROM seller_revenue
+    )
+    SELECT sum(revenue) FILTER (WHERE rank <= 10) / NULLIF(max(total), 0) AS value FROM ranked
+
+- id: cmp006
+  question: How does on-time delivery vary by seller state?
+  category: comparison
+  expected_behavior: >
+    Notes that an order with sellers in two states counts in both, rather than presenting the
+    breakdown as if it partitioned the orders.
+  expected_metrics: [on_time_delivery_rate]
+  tolerance: 0.03
+  ground_truth_sql: |
+    SELECT avg(CASE WHEN o.order_delivered_customer_date <= o.order_estimated_delivery_date
+                    THEN 1.0 ELSE 0.0 END) AS value
+    FROM analytics.orders o
+    JOIN analytics.order_items oi ON oi.order_id = o.order_id
+    JOIN analytics.sellers s ON s.seller_id = oi.seller_id
+    WHERE o.order_status = 'delivered'
+      AND o.order_delivered_customer_date IS NOT NULL
+    GROUP BY s.seller_state
+    ORDER BY value ASC
+    LIMIT 1
+
+- id: cmp007
+  question: What proportion of our customers have ordered more than once?
+  category: comparison
+  expected_behavior: >
+    Groups on the person-level key without returning one row per person, and notes that a short
+    window would understate the rate.
+  expected_metrics: [repeat_customer_rate]
+  tolerance: 0.02
+  ground_truth_sql: |
+    WITH per_person AS (
+      SELECT c.customer_unique_id, count(DISTINCT o.order_id) AS orders
+      FROM analytics.orders o
+      JOIN analytics.customers c ON c.customer_id = o.customer_id
+      WHERE o.order_status <> 'canceled'
+      GROUP BY 1
+    )
+    SELECT count(*) FILTER (WHERE orders > 1)::numeric / NULLIF(count(*), 0) AS value
+    FROM per_person

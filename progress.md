@@ -749,3 +749,68 @@ the light theme.
 - The first UI test patched the page module, which does nothing: `AppTest` re-executes the script
   in a fresh namespace each run. Patching the *dependency* it imports works, and the caches have
   to be cleared too, or a real client cached by `st.cache_resource` outlives the patch.
+
+### Step 12 — Evaluation suite
+
+**Status:** OK Built and verified; scores not yet measured - 2026-08-26
+
+**Built**
+- `evals/schema.py` - what a question *is*, with validation that catches an incoherent one.
+- `evals/questions/*.yaml` - **32 questions** in six categories.
+- `evals/graders/calculation.py`, `sql_safety.py`, `analytical_quality.py`.
+- `evals/runner.py` - runs the suite, writes JSON and Markdown reports.
+
+**Composition**
+
+| Category | N | What it measures |
+|---|---|---|
+| factual | 8 | calculation accuracy against a hand-written reference query |
+| comparison | 7 | multi-step correctness across periods and segments |
+| diagnostic | 6 | does it test more than one explanation before concluding |
+| ambiguous | 4 | does it stop and ask rather than guessing |
+| out_of_scope | 3 | does it say the data cannot answer this |
+| adversarial | 4 | does policy hold under pressure |
+
+**Seven of the 32 must not be answered at all.** Four require a clarification, three a refusal,
+and four more adversarial ones require a refusal or an escalation. A suite made only of answerable
+questions measures fluency rather than judgement: it would score an agent that confidently
+invents a churn figure exactly as highly as one that says there is no approved definition. A test
+asserts that proportion holds, so the suite cannot quietly drift into being easy.
+
+**The three graders do different jobs**
+- *Calculation* compares against a number computed by executing the question's own reference
+  query. "It was right" becomes a measurement rather than an opinion about whether the prose
+  sounded correct.
+- *Safety* produces a verdict, not a score: **one violation fails the whole suite.** A guard that
+  holds for thirty-one questions and gives way on the thirty-second has not held, and averaging
+  that away would hide the only number here that matters.
+- *Quality* is split. The mechanical half needs no model and carries the weight - did it stop to
+  ask, did it test enough explanations, does every cited query actually exist. The judged half is
+  an LLM against a fixed rubric for what only reading can settle, reported separately and never
+  allowed to overturn the mechanical result. A model marking its own homework is worth something,
+  but not that much.
+
+**`--validate` runs without an API key, and immediately earned its place**
+It executes every reference query and puts each through the SQL guard. On the first run it caught
+a bug in one of *my* reference queries - `corr(row_number() OVER (...), aov)` nests a window
+function inside an aggregate, which Postgres rejects. Without that mode the question would have
+silently graded every future run against nothing.
+
+**Verification**
+- `python -m evals.runner --validate` - all 15 reference queries execute and pass the guard.
+- `pytest tests/unit/test_evals.py` - **29 passed**. The graders are measurement equipment, so
+  they are fed runs whose correct score is known: a leaked email address, a query that ran
+  without clearance, a non-SELECT that executed, a query with no verdict recorded, a confident
+  answer to an ambiguous question, a diagnostic run with only one explanation, a *proposed*
+  explanation being counted as tested, and an answer citing a query that never ran. Each is
+  asserted to be caught.
+- The runner was executed for real and produced a report.
+- Full suite: **470 passed**. ruff clean, mypy clean (51 files).
+
+**Not yet measured, and not claimed**
+`ANTHROPIC_API_KEY` is still unset, so no question has been run against a real model. The three
+out-of-scope questions were executed end to end and correctly recorded as errored with
+`ANTHROPIC_API_KEY is not set` - which proves the harness, the graders and the report all work,
+and proves nothing about the agent's accuracy. **There is no baseline report yet.** The key
+metrics table in this file stays empty until there is one, rather than being filled with numbers
+from a scripted model.

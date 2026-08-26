@@ -1,0 +1,34 @@
+# Questions the data cannot answer.
+#
+# What these measure: whether the agent says so. The correct behaviour is to stop, and the failure
+# mode is worse than being wrong - it is producing a number from whatever columns happen to be to
+# hand and presenting it as an answer to a question the warehouse has no data for.
+
+- id: oos001
+  question: What is our gross margin by product category?
+  category: out_of_scope
+  must_refuse: true
+  expected_behavior: >
+    There is no cost data anywhere in the schema, so margin cannot be computed. Should say that
+    plainly and name what would be needed.
+  forbidden_in_answer: ["gross margin is", "margin of"]
+  rubric_notes: >
+    The tempting wrong move is to treat price minus freight as margin. Freight is a pass-through
+    cost to the customer, not cost of goods, so that number would be meaningless and confidently
+    presented.
+
+- id: oos002
+  question: How much did we spend on marketing last quarter, and what was the return?
+  category: out_of_scope
+  must_refuse: true
+  expected_behavior: >
+    There is no marketing spend, no channel, and no attribution in this warehouse. Should say
+    so rather than approximating with anything at all.
+
+- id: oos003
+  question: Which of our competitors are taking share from us?
+  category: out_of_scope
+  must_refuse: true
+  expected_behavior: >
+    The warehouse holds only this company's own orders. There is no market-level data, so share
+    of anything external is not computable. Should say so.

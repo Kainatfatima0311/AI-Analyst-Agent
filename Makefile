@@ -1,4 +1,4 @@
-.PHONY: help install lint format typecheck test test-unit test-integration guard db-up db-down migrate seed smoke catalog api ui evals docker-up docker-down clean
+﻿.PHONY: help install lint format typecheck test test-unit test-integration guard db-up db-down migrate seed smoke catalog api ui evals docker-up docker-down clean
 
 help:
 	@echo "install           install the package with dev extras"
@@ -13,6 +13,7 @@ help:
 	@echo "catalog           regenerate docs/metrics-catalog.md from the YAML definitions"
 	@echo "api / ui          run the API / the Streamlit interface locally"
 	@echo "evals             run the evaluation suite and write a report"
+	@echo "evals-validate    check the suite itself; needs no API key"
 	@echo "docker-up/-down   the whole stack"
 
 install:
@@ -68,6 +69,9 @@ ui:
 
 evals:
 	python -m evals.runner --all --report evals/reports/
+
+evals-validate:
+	python -m evals.runner --validate
 
 docker-up:
 	docker compose up
