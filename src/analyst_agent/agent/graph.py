@@ -25,6 +25,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from analyst_agent.agent import approvals
 from analyst_agent.agent.checkpointer import get_checkpointer, thread_config
 from analyst_agent.agent.llm import LLM, LLMRefusalError, get_llm
 from analyst_agent.agent.nodes import (
@@ -76,6 +77,13 @@ def _after_execute(state: AnalystState) -> str:
     """An escalated query parks the run; there is no route around the approval."""
     if state.get("status") == "awaiting_approval":
         return END
+
+    # Resuming after a human said yes: the *same* statement runs again, now carrying the
+    # approval id. Re-authoring it would mean running something the reviewer never saw.
+    draft = state.get("_draft")
+    if draft and draft.get("approval_id"):
+        return "execute"
+
     if state.get("_last_result"):
         return "interpret"
     # A rejected statement or a tool error: answer with what is established rather than
@@ -241,6 +249,69 @@ def resume_run(thread_id: str, updates: dict[str, Any] | None = None, graph: Any
 
     with bound(run_id=str(run_id), thread_id=thread_id):
         return drive(graph, None, thread_id, run_id)
+
+
+def resume_after_decision(run_id: uuid.UUID, graph: Any | None = None) -> dict[str, Any]:
+    """Carry on once a human has decided on the approval this run was waiting for.
+
+    Both outcomes continue the run; neither is an error.
+
+    * **Approved** - the *same* statement runs again, carrying the approval id. It is
+      deliberately not re-authored: what was agreed to was that text.
+    * **Rejected or timed out** - the draft is dropped and the run proceeds to answer with what
+      it could establish, recording why it could not do more. Refusal is a first-class path.
+    """
+    run = repo.get_run(run_id)
+    if run is None:
+        raise KeyError(f"no run {run_id}")
+
+    pending = repo.pending_approvals(run_id)
+    if pending:
+        raise ValueError(
+            f"run {run_id} still has {len(pending)} undecided approval(s); nothing to resume"
+        )
+
+    decided = [
+        a
+        for a in repo.get_trace(run_id)["approvals"]
+        if a["kind"] in approvals.QUERY_GATE_KINDS and a["status"] != "pending"
+    ]
+    if not decided:
+        raise ValueError(f"run {run_id} has no decided query approval to act on")
+
+    latest = decided[-1]
+    graph = graph if graph is not None else build_graph()
+    snapshot = graph.get_state(thread_config(run["thread_id"]))
+    draft = (snapshot.values or {}).get("_draft") or {}
+
+    if latest["status"] == "approved":
+        updates: dict[str, Any] = {
+            "status": "investigating",
+            "_draft": {**draft, "approval_id": str(latest["approval_id"])},
+            "_pending_approval": None,
+        }
+        log.info("resuming with approval", run_id=str(run_id), approval_id=str(latest["approval_id"]))
+    else:
+        updates = {
+            "status": "investigating",
+            "_draft": None,
+            "_pending_approval": None,
+            "errors": [
+                {
+                    "node": "execute",
+                    "kind": "ApprovalRefused",
+                    "message": (
+                        f"the query was {latest['status']}"
+                        + (f": {latest['decision_reason']}" if latest.get("decision_reason") else "")
+                    ),
+                    "recoverable": False,
+                    "attempt": 1,
+                }
+            ],
+        }
+        log.info("resuming without approval", run_id=str(run_id), decision=latest["status"])
+
+    return resume_run(run["thread_id"], updates=updates, graph=graph)
 
 
 def drive(

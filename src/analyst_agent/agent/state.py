@@ -160,6 +160,7 @@ class AnalystState(TypedDict, total=False):
     _metric_terms: list[str]
     _investigating_finding_id: str | None
     _hypothesis_queue: list[str]
+    _pending_approval: dict[str, Any] | None
     _reconciliations: Annotated[list[dict[str, Any]], operator.add]
     _under_tested: Annotated[list[dict[str, Any]], operator.add]
     _draft: dict[str, Any] | None

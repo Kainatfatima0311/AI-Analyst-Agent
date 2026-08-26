@@ -653,3 +653,48 @@ audit, so it is refused and the original stands.
 The first draft of `ask()` created a run row, deleted it, and created another - a leftover from
 working out where the run id should come from. Replaced with one row created in the request and
 driven by `graph.drive()` against that same id, which is why `_drive` became public.
+
+### Step 10 — Human approval gates and recovery
+
+**Status:** OK Done - 2026-08-26 - Tag: `v0.5-approvals`
+
+**The gap this closed**
+Step 9 left the run parking at `awaiting_approval` with **no approval row written**. The guard
+escalated, the graph stopped, and nobody could see what it was waiting on. The gate existed and
+was unusable.
+
+**Built**
+- `agent/approvals.py` - requesting an approval and, more importantly, honouring one.
+- `sql_runner` now takes an `approval_id`, and `graph.resume_after_decision()` carries the run
+  forward once a person has answered.
+- `db/migrations/003_approved_verdict.sql`.
+- API: approve and reject now resume the run in the background.
+
+**Consent cannot be manufactured**
+An escalated statement runs only when four things hold, all checked against the **stored row**
+rather than against anything the caller said: the approval exists, it belongs to this run, a
+human approved it, and the statement matches the one they were shown. The last one is a
+whitespace-normalised fingerprint - deliberately not semantic, because what a reviewer agreed to
+was the text in front of them, not a slot in the flow. Tests cover all four: passing the id of a
+*pending* approval does not clear it, an invented id is refused, and swapping the statement after
+approval is refused with "granted for a different statement".
+
+**Both outcomes carry the run forward**
+Approved: the *same* statement runs again, not something re-authored afterwards. Rejected or
+timed out: the draft is dropped, the run answers with what it could establish, and the refusal is
+recorded in the run's own error list. A timeout is *written down* as a decision with its reason
+rather than inferred from the clock at read time.
+
+**Verification**
+- `pytest tests/integration/test_approvals.py` - **13 passed**, including the one that matters:
+  the graph object is discarded and rebuilt between parking and resuming, so nothing carries the
+  run forward but the checkpoint. `intake` still appears exactly once.
+- Full suite: **427 passed**. ruff clean, mypy clean (48 files).
+
+**A distinction the audit was missing**
+Running under an approval collided with `sql_audit_executed_implies_allowed`. The cause was that
+`verdict` had no value for the outcome a reviewer most wants to see: escalated by the guard, then
+cleared by a person. Recording it as `allowed` would have erased the escalation from the trail.
+Migration 003 adds `approved` as its own verdict, so the audit now distinguishes "the guard
+permitted this" from "a person permitted this", and the executed constraint accepts both while
+still refusing a rejected or undecided one.

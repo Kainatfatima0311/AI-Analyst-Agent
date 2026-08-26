@@ -1,4 +1,4 @@
-"""The FastAPI application.
+﻿"""The FastAPI application.
 
 A question is started in the background and the caller gets a ``run_id`` immediately. An
 investigation takes minutes and can pause for a human, so making the caller hold an HTTP
@@ -21,7 +21,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
-from analyst_agent.agent.graph import build_graph, resume_run
+from analyst_agent.agent.graph import build_graph, resume_after_decision, resume_run
 from analyst_agent.api import schemas, service
 from analyst_agent.config import get_settings
 from analyst_agent.db import repository as repo
@@ -197,7 +197,7 @@ async def stream(run_id: uuid.UUID) -> EventSourceResponse:
 
     Polls rather than listens: the work happens in a background thread in this same process, and
     a poll against an indexed table is simpler and more robust than wiring a notification channel
-    through it. The stream closes on a terminal status, and on a parked one — there is nothing
+    through it. The stream closes on a terminal status, and on a parked one â€” there is nothing
     further to report until a human acts.
     """
     _run_or_404(run_id)
@@ -244,8 +244,23 @@ def list_approvals(run_id: uuid.UUID) -> list[schemas.ApprovalOut]:
     return service.trace_view(run_id).approvals
 
 
+def _resume_after_decision(run_id: uuid.UUID) -> None:
+    try:
+        resume_after_decision(run_id, graph=build_graph())
+    except ValueError as exc:
+        # Another approval is still outstanding, or there was nothing to act on. Not an error:
+        # the run stays parked until every gate it is waiting on has been answered.
+        log.info("not resuming yet", run_id=str(run_id), reason=str(exc))
+    except Exception:
+        log.exception("resume after decision failed", run_id=str(run_id))
+
+
 def _decide(
-    run_id: uuid.UUID, approval_id: uuid.UUID, decision: str, payload: schemas.DecisionRequest
+    run_id: uuid.UUID,
+    approval_id: uuid.UUID,
+    decision: str,
+    payload: schemas.DecisionRequest,
+    background: BackgroundTasks,
 ) -> schemas.ApprovalOut:
     _run_or_404(run_id)
     applied = repo.decide_approval(
@@ -262,6 +277,10 @@ def _decide(
     )
     if found is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no approval {approval_id}")
+
+    # Both outcomes carry the run forward. A rejection is not a dead end - the run answers with
+    # what it could establish and says what it could not.
+    background.add_task(_resume_after_decision, run_id)
     return found
 
 
@@ -271,9 +290,12 @@ def _decide(
     tags=["approvals"],
 )
 def approve(
-    run_id: uuid.UUID, approval_id: uuid.UUID, payload: schemas.DecisionRequest
+    run_id: uuid.UUID,
+    approval_id: uuid.UUID,
+    payload: schemas.DecisionRequest,
+    background: BackgroundTasks,
 ) -> schemas.ApprovalOut:
-    return _decide(run_id, approval_id, "approved", payload)
+    return _decide(run_id, approval_id, "approved", payload, background)
 
 
 @app.post(
@@ -282,10 +304,13 @@ def approve(
     tags=["approvals"],
 )
 def reject(
-    run_id: uuid.UUID, approval_id: uuid.UUID, payload: schemas.DecisionRequest
+    run_id: uuid.UUID,
+    approval_id: uuid.UUID,
+    payload: schemas.DecisionRequest,
+    background: BackgroundTasks,
 ) -> schemas.ApprovalOut:
     """Rejection is a first-class path: the run continues and reports what it could establish."""
-    return _decide(run_id, approval_id, "rejected", payload)
+    return _decide(run_id, approval_id, "rejected", payload, background)
 
 
 @app.post("/v1/runs/{run_id}/answer", response_model=schemas.RunOut, tags=["runs"])

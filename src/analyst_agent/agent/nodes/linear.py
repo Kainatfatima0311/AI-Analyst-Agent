@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from analyst_agent.agent import approvals
 from analyst_agent.agent.budget import Budget
 from analyst_agent.agent.llm import LLM
 from analyst_agent.agent.nodes.schemas import (
@@ -317,7 +318,14 @@ def make_execute(ctx: NodeContext) -> Node:
         with repo.step(run_id, "execute") as handle:
             result = ctx.tools.invoke(
                 "sql_runner",
-                {"sql": draft["sql"], "purpose": draft["purpose"], "row_limit": None},
+                {
+                    "sql": draft["sql"],
+                    "purpose": draft["purpose"],
+                    "row_limit": None,
+                    # Set only when resuming after a human decided. The tool checks it against
+                    # the stored decision, so passing it does not by itself grant anything.
+                    "approval_id": draft.get("approval_id"),
+                },
                 run_id,
                 handle.step_id,
             )
@@ -333,14 +341,35 @@ def make_execute(ctx: NodeContext) -> Node:
 
             if result.refused:
                 verdict = result.data.get("verdict")
-                repo.finish_step(
-                    handle,
-                    status="paused" if verdict == "escalated" else "ok",
-                    summary=result.summary,
-                )
                 if verdict == "escalated":
+                    # Write the row a person will actually read. Without this the run parks and
+                    # nobody can see what it is waiting on.
+                    approval_id = approvals.request_query_approval(
+                        run_id,
+                        sql=draft["sql"],
+                        purpose=draft["purpose"],
+                        reasons=result.data.get("reasons", []),
+                        sensitive_columns=result.data.get("sensitive_columns", []),
+                        estimated_cost=result.data.get("estimated_cost"),
+                        query_id=uuid.UUID(record["query_id"]) if record["query_id"] else None,
+                        settings=ctx.settings,
+                    )
                     repo.set_run_status(run_id, "awaiting_approval")
-                    update["status"] = "awaiting_approval"
+                    repo.finish_step(handle, status="paused", summary=result.summary)
+                    return {
+                        **update,
+                        "status": "awaiting_approval",
+                        "queries": [record],
+                        # The draft is kept, not discarded: if the decision is yes, this exact
+                        # statement is what runs - not something re-authored later.
+                        "_draft": {**draft, "approval_id": None},
+                        "_pending_approval": {
+                            "approval_id": str(approval_id),
+                            "kind": "query",
+                        },
+                    }
+
+                repo.finish_step(handle, status="ok", summary=result.summary)
                 return {**update, "queries": [record]}
 
             if not result.ok:

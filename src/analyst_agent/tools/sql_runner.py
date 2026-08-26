@@ -64,6 +64,14 @@ class SqlRunnerInput(BaseModel):
             "too large."
         ),
     )
+    approval_id: str | None = Field(
+        default=None,
+        description=(
+            "Only for re-running a statement a human has approved. Pass the approval_id you "
+            "were given. You cannot approve your own query: the id is checked against the "
+            "recorded decision and against the exact statement the reviewer saw."
+        ),
+    )
 
 
 class SqlRunnerTool(Tool[SqlRunnerInput]):
@@ -104,12 +112,21 @@ conclude there is no data.
                 row_limit=payload.row_limit,
             )
 
+            # An escalated statement that a human has cleared is recorded as `approved`, not as
+            # `allowed`: the audit should say who permitted it. The escalation stays visible.
+            cleared, why_not = (
+                self._approval_clears(payload, run_id)
+                if verdict.requires_approval
+                else (False, None)
+            )
+            recorded_verdict = "approved" if cleared else verdict.verdict
+
             # Audited before anything is decided, so a blocked attempt is part of the record.
             query_id = repo.record_sql_audit(
                 run_id=run_id,
                 purpose=payload.purpose,
                 sql_text=payload.sql,
-                verdict=verdict.verdict,
+                verdict=recorded_verdict,
                 reasons=[str(r) for r in verdict.reasons],
                 rewritten_sql=verdict.rewritten_sql,
                 referenced_objects=list(verdict.referenced_objects),
@@ -128,14 +145,22 @@ conclude there is no data.
                 )
 
             if verdict.requires_approval:
-                return ToolResult.refuse(
-                    "the query is valid but needs human approval before it can run",
+                if not cleared:
+                    return ToolResult.refuse(
+                        "the query is valid but needs human approval before it can run",
+                        query_id=str(query_id),
+                        verdict="escalated",
+                        reasons=[str(r) for r in verdict.reasons],
+                        sensitive_columns=list(verdict.sensitive_columns),
+                        estimated_cost=verdict.estimated_cost,
+                        approval_error=why_not,
+                        guidance="Stop and wait for the decision. Do not attempt a workaround.",
+                    )
+                log.info(
+                    "running under an approval",
+                    run_id=str(run_id),
+                    approval_id=payload.approval_id,
                     query_id=str(query_id),
-                    verdict="escalated",
-                    reasons=[str(r) for r in verdict.reasons],
-                    sensitive_columns=list(verdict.sensitive_columns),
-                    estimated_cost=verdict.estimated_cost,
-                    guidance="Stop and wait for the decision. Do not attempt a workaround.",
                 )
 
             statement = verdict.rewritten_sql or payload.sql
@@ -159,6 +184,28 @@ conclude there is no data.
             payload, run_id, query_id, rows, duration_ms, verdict.row_limit, verdict.reasons,
             verdict.estimated_cost,
         )
+
+    @staticmethod
+    def _approval_clears(
+        payload: SqlRunnerInput, run_id: uuid.UUID
+    ) -> tuple[bool, str | None]:
+        """Whether a human has cleared this exact statement.
+
+        Checked against the stored decision, never against a flag the caller supplied. A bug in
+        a node, or a model that has learned to pass an id, must not be able to manufacture
+        consent - so the id has to name a row that a person actually approved, on this run, for
+        this statement.
+        """
+        if not payload.approval_id:
+            return False, None
+        try:
+            approval_id = uuid.UUID(payload.approval_id)
+        except ValueError:
+            return False, f"{payload.approval_id!r} is not a valid approval id"
+
+        from analyst_agent.agent.approvals import approved_statement
+
+        return approved_statement(run_id, approval_id, payload.sql)
 
     def _deliver(
         self,
