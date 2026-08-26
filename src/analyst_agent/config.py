@@ -18,6 +18,7 @@ from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
+Provider = Literal["anthropic", "groq"]
 
 
 class Settings(BaseSettings):
@@ -27,6 +28,10 @@ class Settings(BaseSettings):
         extra="ignore",
         case_sensitive=False,
     )
+
+    # --- Model provider ----------------------------------------------------
+    llm_provider: Provider = "anthropic"
+    """Which backend answers a node's call. See agent/llm_groq.py for what Groq lacks."""
 
     # --- Anthropic ---------------------------------------------------------
     anthropic_api_key: SecretStr | None = None
@@ -41,6 +46,20 @@ class Settings(BaseSettings):
 
     max_tokens_nonstreaming: int = 16_000
     max_tokens_streaming: int = 64_000
+
+    # --- Groq (OpenAI-compatible chat completions) --------------------------
+    groq_api_key: SecretStr | None = None
+    groq_model: str = "openai/gpt-oss-120b"
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_temperature: float = 0.2
+    """Low, not zero: SQL authoring wants determinism, hypothesis generation wants variety."""
+
+    groq_reasoning_effort: bool = False
+    """Send the effort tier as ``reasoning_effort``.
+
+    Off by default because a model that does not support the parameter rejects the whole
+    request rather than ignoring it. Turn it on for a reasoning model.
+    """
 
     # --- Database ----------------------------------------------------------
     db_rw_dsn: SecretStr = Field(description="Service state only. Never handed to the tool layer.")
@@ -82,10 +101,10 @@ class Settings(BaseSettings):
             return tuple(part.strip() for part in value.split(",") if part.strip())
         return value
 
-    @field_validator("anthropic_api_key", mode="before")
+    @field_validator("anthropic_api_key", "groq_api_key", mode="before")
     @classmethod
     def _blank_key_is_absent(cls, value: object) -> object:
-        """`ANTHROPIC_API_KEY=` in .env must read as absent, not as a configured empty key.
+        """A blank key in .env must read as absent, not as a configured empty key.
 
         Without this, the placeholder line committed in .env.example makes the service look
         configured and the failure surfaces much later, at the first model call.
@@ -112,11 +131,36 @@ class Settings(BaseSettings):
             )
         return self.anthropic_api_key.get_secret_value()
 
+    def require_groq_key(self) -> str:
+        """Fail loudly and early rather than at the first model call."""
+        if self.groq_api_key is None or not self.groq_api_key.get_secret_value().strip():
+            raise RuntimeError(
+                "GROQ_API_KEY is not set, and LLM_PROVIDER=groq. Set it in .env, or switch "
+                "LLM_PROVIDER back to anthropic."
+            )
+        return self.groq_api_key.get_secret_value()
+
+    def require_provider_key(self) -> str:
+        """The key for whichever provider is configured."""
+        if self.llm_provider == "groq":
+            return self.require_groq_key()
+        return self.require_api_key()
+
+    @property
+    def analyst_model_id(self) -> str:
+        """The model id actually in use, for logging and for the run row."""
+        return self.groq_model if self.llm_provider == "groq" else self.analyst_model
+
     @property
     def secret_values(self) -> tuple[str, ...]:
         """Every secret string, for the log redactor to scrub. See observability/logging.py."""
         values: list[str] = []
-        for secret in (self.anthropic_api_key, self.db_rw_dsn, self.db_ro_dsn):
+        for secret in (
+            self.anthropic_api_key,
+            self.groq_api_key,
+            self.db_rw_dsn,
+            self.db_ro_dsn,
+        ):
             if secret is None:
                 continue
             raw = secret.get_secret_value()

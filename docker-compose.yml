@@ -9,8 +9,13 @@ name: analyst-agent
 x-service-env: &service-env
   DB_RW_DSN: postgresql://${POSTGRES_USER:-app_rw}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-analyst}
   DB_RO_DSN: postgresql://${ANALYST_RO_USER:-analyst_ro}:${ANALYST_RO_PASSWORD:?set ANALYST_RO_PASSWORD in .env}@db:5432/${POSTGRES_DB:-analyst}
+  LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   ANALYST_MODEL: ${ANALYST_MODEL:-claude-opus-5}
+  GROQ_API_KEY: ${GROQ_API_KEY:-}
+  GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+  GROQ_TEMPERATURE: ${GROQ_TEMPERATURE:-0.2}
+  GROQ_REASONING_EFFORT: ${GROQ_REASONING_EFFORT:-false}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   LOG_FORMAT: ${LOG_FORMAT:-json}
   ENVIRONMENT: ${ENVIRONMENT:-dev}

@@ -305,7 +305,24 @@ _llm: LLM | None = None
 
 
 def get_llm() -> LLM:
+    """The configured backend.
+
+    ``LLM_PROVIDER=groq`` returns the Groq subclass, which honours the same contract. The
+    import is local so that a deployment using only one provider does not need the other's SDK
+    resolvable at module load.
+    """
     global _llm
     if _llm is None:
-        _llm = LLM()
+        if get_settings().llm_provider == "groq":
+            from analyst_agent.agent.llm_groq import GroqLLM
+
+            _llm = GroqLLM()
+        else:
+            _llm = LLM()
     return _llm
+
+
+def reset_llm() -> None:
+    """Drop the cached backend. For tests, and after a settings change."""
+    global _llm
+    _llm = None

@@ -19,6 +19,7 @@ dependencies = [
     "pydantic-settings>=2.6",
     # LLM + orchestration
     "anthropic>=1.0",
+    "groq>=1.0",
     "langgraph>=1.2",
     "langgraph-checkpoint-postgres>=3.1",
     # Database
