@@ -25,7 +25,7 @@ $env:API_PORT = "8010"; docker compose up      # UI at /app/ on the same port
 
 ## Why this is not a chat box over a database
 
-Four rules, and none of them live in the prompt.
+Five rules, and none of them live in the prompt.
 
 **1 · Read-only by construction, and every query checked before it runs.**
 Statements are parsed into an AST with `sqlglot` — not matched with regex, which is bypassable by
@@ -54,11 +54,32 @@ statement and binds every value as a parameter. An undeclared dimension is refus
 interpolated, so for anything the registry covers **no free text from the model reaches SQL**, and
 the answer cites a definition version rather than a formula the model remembered.
 
-**4 · Every number leads back to a query.**
+**4 · Confidence is a number you can decompose.**
+Every answer carries a score out of 100 *and the factors that produced it* — supporting queries,
+explanations tested, whether an alternative was actually refuted, what the data allowed, what is
+still open. A percentage on its own is a claim; a percentage beside the five things it was computed
+from is something you can disagree with. The agent's own stated band is a **ceiling, never a
+floor**: a run it called `low` cannot come out at 90 for having run four queries.
+
+**5 · Every number leads back to a query.**
 A finding with no evidence is refused by a database constraint, not by a convention. The answer
 cites `query_id`s, the trace holds the statement, and the interface puts them one click apart —
 including the queries the guard **refused**, because what the agent tried is usually what a
 reviewer wants to know.
+
+---
+
+## Dashboards, reports and exports
+
+| | |
+|---|---|
+| **Dashboard** | analyses run, saved reports, success rate over *finished* runs, what is still open, most-used metric definitions, and the most recent findings |
+| **Saved reports** | save a finished analysis, rename it, delete it, read it back. A report is a **snapshot**, not a pointer: it keeps the question, the answer, the confidence, the charts, the SQL behind every cited number and the metric definition versions used, frozen as they read when you saved it |
+| **Exports** | PDF to read, Excel to work with (one sheet per kind of thing, SQL in a column), PNG for a chart on its own. All three carry the findings and the evidence section |
+
+A report does not change when the system behind it does. That is the whole reason it is a copy —
+somebody re-opening a report from March must not find different figures under the same name
+because a definition was revised in between.
 
 ---
 
@@ -117,6 +138,11 @@ the guard and the metrics layer is testable without it.
 | `POST /v1/runs/{id}/approvals/{id}/approve` · `/reject` | decide a pending gate |
 | `POST /v1/runs/{id}/answer` | reply to a clarification the agent asked for |
 | `GET /v1/metrics` · `GET /v1/schema` | the approved definitions; what is queryable |
+| `GET /v1/dashboard/summary` | totals, outcome rates, recent questions, most-used definitions, recent findings |
+| `POST /v1/reports` · `GET /v1/reports` | save a finished run as a report; list what is saved |
+| `GET` · `PATCH` · `DELETE /v1/reports/{id}` | read, rename, delete |
+| `GET /v1/reports/{id}/export.pdf` · `.xlsx` | the report as a file, evidence included |
+| `GET /v1/charts/{id}/export.png` | one chart, as it was rendered when it was built |
 | `GET /healthz` · `GET /readyz` | liveness; readiness including the read-only check |
 
 `202` rather than `200` on a question is deliberate: an investigation takes minutes and can pause

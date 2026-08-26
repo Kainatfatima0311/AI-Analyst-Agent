@@ -586,3 +586,180 @@ def resumable_runs() -> list[dict[str, Any]]:
             "ORDER BY created_at"
         )
         return list(cur.fetchall())
+
+# --- dashboard ---------------------------------------------------------------
+
+
+def dashboard_summary(recent: int = 6) -> dict[str, Any]:
+    """Everything the dashboard shows, in one round trip.
+
+    One function and one connection rather than six endpoints: a dashboard that fires six
+    requests shows six different moments, and the totals then disagree with the list beneath
+    them for no reason a reader can see.
+
+    "Most used metrics" comes from ``tool_calls`` where the tool was ``metric_query`` — the only
+    place a metric is invoked *by name*. Parsing metric names out of SQL text would be guessing;
+    the tool call recorded exactly which approved definition was asked for.
+    """
+    with rw_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) AS total, "
+            "count(*) FILTER (WHERE status = 'completed') AS completed, "
+            "count(*) FILTER (WHERE status = 'failed') AS failed, "
+            "count(*) FILTER (WHERE status = 'truncated') AS truncated, "
+            "count(*) FILTER (WHERE status = 'clarifying') AS clarifying, "
+            "count(*) FILTER (WHERE status = 'awaiting_approval') AS awaiting_approval, "
+            "count(*) FILTER (WHERE status IN ('received', 'investigating')) AS in_flight, "
+            "coalesce(sum(tokens_in + tokens_out), 0) AS tokens, "
+            "coalesce(sum(queries_used), 0) AS queries, "
+            "coalesce(sum(cost_usd), 0) AS cost_usd "
+            "FROM agent.runs"
+        )
+        totals = cur.fetchone() or {}
+
+        cur.execute(
+            "SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) AS median_ms "
+            "FROM agent.runs WHERE duration_ms IS NOT NULL"
+        )
+        median = (cur.fetchone() or {}).get("median_ms")
+
+        cur.execute("SELECT count(*) AS n FROM agent.reports")
+        reports = (cur.fetchone() or {}).get("n", 0)
+
+        cur.execute(
+            "SELECT run_id, question, status, created_at, duration_ms "
+            "FROM agent.runs ORDER BY created_at DESC LIMIT %s",
+            (recent,),
+        )
+        questions = list(cur.fetchall())
+
+        cur.execute(
+            "SELECT arguments ->> 'metric' AS metric, count(*) AS uses, "
+            "max(started_at) AS last_used "
+            "FROM agent.tool_calls "
+            "WHERE tool = 'metric_query' AND arguments ->> 'metric' IS NOT NULL "
+            "GROUP BY 1 ORDER BY uses DESC, metric LIMIT 8"
+        )
+        metrics = list(cur.fetchall())
+
+        # Findings, newest first - the closest thing the system has to "what it noticed".
+        cur.execute(
+            "SELECT f.finding_id, f.run_id, f.statement, f.material, f.created_at, r.question "
+            "FROM agent.findings f JOIN agent.runs r ON r.run_id = f.run_id "
+            "ORDER BY f.created_at DESC LIMIT %s",
+            (recent,),
+        )
+        insights = list(cur.fetchall())
+
+    total = int(totals.get("total") or 0)
+    completed = int(totals.get("completed") or 0)
+    failed = int(totals.get("failed") or 0)
+    truncated = int(totals.get("truncated") or 0)
+    # Rate over *finished* runs only. Counting a run still in flight as a failure would make the
+    # number drop every time somebody asks a question.
+    finished = completed + failed + truncated
+
+    return {
+        "totals": {
+            "analyses": total,
+            "completed": completed,
+            "failed": failed,
+            "truncated": truncated,
+            "clarifying": int(totals.get("clarifying") or 0),
+            "awaiting_approval": int(totals.get("awaiting_approval") or 0),
+            "in_flight": int(totals.get("in_flight") or 0),
+            "saved_reports": int(reports or 0),
+            "queries": int(totals.get("queries") or 0),
+            "tokens": int(totals.get("tokens") or 0),
+            "cost_usd": float(totals.get("cost_usd") or 0),
+            "median_duration_ms": int(median) if median is not None else None,
+        },
+        "outcomes": {
+            "finished": finished,
+            "success_rate": round(100 * completed / finished, 1) if finished else None,
+            "failure_rate": round(100 * failed / finished, 1) if finished else None,
+        },
+        "recent_questions": questions,
+        "top_metrics": metrics,
+        "recent_insights": insights,
+    }
+
+
+# --- saved reports -----------------------------------------------------------
+
+
+def save_report(
+    run_id: uuid.UUID, name: str, snapshot: dict[str, Any], created_by: str | None = None
+) -> uuid.UUID:
+    """Freeze a run as a report. See db/migrations/004 for why it is a snapshot."""
+    report_id = uuid.uuid4()
+    with rw_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO agent.reports (report_id, run_id, name, created_by, snapshot) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (report_id, run_id, name.strip(), created_by, Jsonb(snapshot)),
+        )
+    log.info("report saved", report_id=str(report_id), run_id=str(run_id), name=name.strip())
+    return report_id
+
+
+def list_reports(limit: int = 50) -> list[dict[str, Any]]:
+    """Report rows without their snapshots.
+
+    The snapshot of a long run is large, and a list of forty of them would be megabytes to render
+    a page of names. The counts a list needs are read out of the snapshot in SQL instead.
+    """
+    with rw_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT report_id, run_id, name, created_by, created_at, updated_at, "
+            "snapshot ->> 'question' AS question, "
+            "snapshot -> 'confidence' ->> 'score' AS confidence_score, "
+            "jsonb_array_length(coalesce(snapshot -> 'charts', '[]'::jsonb)) AS charts, "
+            "jsonb_array_length(coalesce(snapshot -> 'evidence', '[]'::jsonb)) AS queries "
+            "FROM agent.reports ORDER BY created_at DESC LIMIT %s",
+            (limit,),
+        )
+        return list(cur.fetchall())
+
+
+def get_report(report_id: uuid.UUID) -> dict[str, Any] | None:
+    with rw_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM agent.reports WHERE report_id = %s", (report_id,))
+        return cur.fetchone()
+
+
+def rename_report(report_id: uuid.UUID, name: str) -> bool:
+    """The only mutable field. Returns False if there is no such report."""
+    with rw_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE agent.reports SET name = %s, updated_at = now() WHERE report_id = %s",
+            (name.strip(), report_id),
+        )
+        renamed = cur.rowcount == 1
+    if renamed:
+        log.info("report renamed", report_id=str(report_id), name=name.strip())
+    return renamed
+
+
+def delete_report(report_id: uuid.UUID) -> bool:
+    with rw_conn() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM agent.reports WHERE report_id = %s", (report_id,))
+        deleted = cur.rowcount == 1
+    if deleted:
+        log.info("report deleted", report_id=str(report_id))
+    return deleted
+
+
+def chart_png(chart_id: uuid.UUID) -> tuple[bytes, str] | None:
+    """The stored PNG for one chart, with its title.
+
+    Rendered once when the chart was built rather than on demand: the frame it came from may have
+    been evicted by then, and re-rendering from a spec that no longer has its data would produce
+    a different picture under the same id.
+    """
+    with rw_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT png, title FROM agent.charts WHERE chart_id = %s", (chart_id,))
+        row = cur.fetchone()
+    if row is None or row["png"] is None:
+        return None
+    return bytes(row["png"]), str(row["title"] or "chart")

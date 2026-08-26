@@ -356,3 +356,38 @@ def test_the_interface_never_names_the_database(client: TestClient) -> None:
     javascript = client.get("/app/app.js").text
     for forbidden in ("postgres", "5432", "psycopg", "analyst_ro", "app_rw"):
         assert forbidden not in javascript.lower(), forbidden
+
+def test_the_interface_reaches_the_phase_two_endpoints(client: TestClient) -> None:
+    """The page has to actually call what was built, not just look like it could.
+
+    Cheap to assert and it has caught the real failure mode twice: an endpoint shipped and no
+    caller wired to it, which no backend test can see.
+    """
+    javascript = client.get("/app/app.js").text
+    for path in (
+        "/v1/dashboard/summary",
+        "/v1/reports",
+        "/export.pdf",
+        "/export.xlsx",
+        "/export.png",
+        "confidence_detail",
+    ):
+        assert path in javascript, path
+
+
+def test_the_interface_offers_rename_and_delete(client: TestClient) -> None:
+    javascript = client.get("/app/app.js").text
+    assert '"PATCH"' in javascript
+    assert '"DELETE"' in javascript
+    # Deleting a snapshot cannot be undone, so it must not be a single unguarded click.
+    assert "confirm(" in javascript
+
+
+def test_the_interface_has_empty_and_loading_states(client: TestClient) -> None:
+    """An empty page must not look like a broken one, and a slow one not like a stuck one."""
+    javascript = client.get("/app/app.js").text
+    css = client.get("/app/app.css").text
+    assert "function empty(" in javascript
+    assert "function skeleton(" in javascript
+    assert ".empty-title" in css
+    assert "@keyframes shimmer" in css

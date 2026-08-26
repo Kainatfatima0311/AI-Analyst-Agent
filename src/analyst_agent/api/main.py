@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, status
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
@@ -33,6 +33,12 @@ from analyst_agent.observability.logging import (
     configure_logging,
     get_logger,
     set_redaction_secrets,
+)
+from analyst_agent.reports import to_excel, to_pdf
+from analyst_agent.reports.snapshot import (
+    build_snapshot,
+    default_name,
+    safe_filename,
 )
 
 log = get_logger(__name__)
@@ -391,3 +397,166 @@ def schema() -> dict[str, Any]:
                 }
             )
     return {"schemas": sorted(catalog.schemas), "objects": objects}
+
+
+# --- dashboard --------------------------------------------------------------
+
+
+@app.get("/v1/dashboard/summary", response_model=schemas.DashboardOut, tags=["dashboard"])
+def dashboard_summary(recent: int = 6) -> schemas.DashboardOut:
+    """Everything the dashboard shows, in one response.
+
+    One endpoint rather than six: a dashboard assembled from six requests shows six different
+    moments, and the totals then disagree with the list beneath them for no reason the reader can
+    see. `recent` bounds the three lists; the counts are always over everything.
+    """
+    recent = max(1, min(recent, 25))
+    return schemas.DashboardOut(**repo.dashboard_summary(recent=recent))
+
+
+# --- saved reports ----------------------------------------------------------
+
+
+@app.post(
+    "/v1/reports",
+    response_model=schemas.ReportOut,
+    status_code=status.HTTP_201_CREATED,
+    tags=["reports"],
+)
+def save_report(payload: schemas.SaveReportRequest) -> schemas.ReportOut:
+    """Freeze a finished run as a report.
+
+    Refused for a run with no answer: a report whose body is empty is a filename, and it would
+    sit in the list looking like a result.
+    """
+    try:
+        trace = repo.get_trace(payload.run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"no such run: {payload.run_id}") from None
+
+    stored = (trace.get("run") or {}).get("answer")
+    if not stored:
+        raise HTTPException(
+            status_code=409,
+            detail="that run has no answer yet, so there is nothing to save as a report",
+        )
+
+    snapshot = build_snapshot(trace, stored)
+    name = (payload.name or "").strip() or default_name(snapshot["question"])
+    report_id = repo.save_report(
+        payload.run_id, name, snapshot, created_by=payload.saved_by
+    )
+    saved = repo.get_report(report_id)
+    assert saved is not None  # noqa: S101 - just inserted, inside the same transaction boundary
+    return schemas.ReportOut(**saved)
+
+
+@app.get("/v1/reports", response_model=list[schemas.ReportSummaryOut], tags=["reports"])
+def list_reports(limit: int = 50) -> list[schemas.ReportSummaryOut]:
+    """Saved reports, newest first, without their snapshots.
+
+    The snapshot of a long run is large; forty of them would be megabytes to render a page of
+    names. The counts a list needs are read out of the snapshot in SQL instead.
+    """
+    rows = repo.list_reports(limit=max(1, min(limit, 200)))
+    return [
+        schemas.ReportSummaryOut(
+            report_id=row["report_id"],
+            run_id=row["run_id"],
+            name=row["name"],
+            question=row.get("question"),
+            created_by=row.get("created_by"),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            confidence_score=int(row["confidence_score"]) if row.get("confidence_score") else None,
+            charts=int(row.get("charts") or 0),
+            queries=int(row.get("queries") or 0),
+        )
+        for row in rows
+    ]
+
+
+@app.get("/v1/reports/{report_id}", response_model=schemas.ReportOut, tags=["reports"])
+def read_report(report_id: uuid.UUID) -> schemas.ReportOut:
+    return schemas.ReportOut(**_report_or_404(report_id))
+
+
+@app.patch("/v1/reports/{report_id}", response_model=schemas.ReportOut, tags=["reports"])
+def rename_report(
+    report_id: uuid.UUID, payload: schemas.RenameReportRequest
+) -> schemas.ReportOut:
+    """Rename a report. The name is the only mutable field - see db/migrations/004."""
+    if not repo.rename_report(report_id, payload.name):
+        raise HTTPException(status_code=404, detail=f"no such report: {report_id}")
+    return schemas.ReportOut(**_report_or_404(report_id))
+
+
+@app.delete("/v1/reports/{report_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["reports"])
+def delete_report(report_id: uuid.UUID) -> Response:
+    if not repo.delete_report(report_id):
+        raise HTTPException(status_code=404, detail=f"no such report: {report_id}")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- exports ----------------------------------------------------------------
+
+
+@app.get("/v1/reports/{report_id}/export.pdf", tags=["reports"])
+def export_pdf(report_id: uuid.UUID) -> Response:
+    """The report as a PDF: conclusion, confidence with its factors, findings, evidence, SQL."""
+    report = _report_or_404(report_id)
+    return _download(
+        to_pdf(report), "application/pdf", safe_filename(report["name"], "pdf")
+    )
+
+
+@app.get("/v1/reports/{report_id}/export.xlsx", tags=["reports"])
+def export_excel(report_id: uuid.UUID) -> Response:
+    """The report as a workbook, one sheet per kind of thing, SQL in a column."""
+    report = _report_or_404(report_id)
+    return _download(
+        to_excel(report),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        safe_filename(report["name"], "xlsx"),
+    )
+
+
+@app.get("/v1/charts/{chart_id}/export.png", tags=["reports"])
+def export_chart_png(chart_id: uuid.UUID) -> Response:
+    """One chart as the PNG that was rendered when it was built.
+
+    Not re-rendered on request: the frame it came from may have been evicted by then, and a
+    picture regenerated from a spec without its data would differ from the one the answer was
+    written against - under the same id.
+    """
+    found = repo.chart_png(chart_id)
+    if found is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no stored image for chart {chart_id}",
+        )
+    png, title = found
+    return _download(png, "image/png", safe_filename(title, "png"))
+
+
+def _report_or_404(report_id: uuid.UUID) -> dict[str, Any]:
+    report = repo.get_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"no such report: {report_id}")
+    return report
+
+
+def _download(payload: bytes, media_type: str, filename: str) -> Response:
+    """A file the browser saves rather than renders.
+
+    `Content-Length` is set explicitly so a download shows real progress instead of an unbounded
+    spinner, which on a slow connection is indistinguishable from a hang.
+    """
+    return Response(
+        content=payload,
+        media_type=media_type,
+        headers={
+            "content-disposition": f'attachment; filename="{filename}"',
+            "content-length": str(len(payload)),
+        },
+    )

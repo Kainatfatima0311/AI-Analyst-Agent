@@ -8,7 +8,7 @@
 | **Repository** | `https://github.com/Kainatfatima0311/AI-Analyst-Agent` |
 | **Language / runtime** | Python 3.12+ (developed on 3.13.5) |
 | **Core stack** | FastAPI · LangGraph · Anthropic Claude (`claude-opus-5`) or Groq · PostgreSQL 17 · sqlglot · pandas · Plotly · a hand-written HTML/CSS/JS interface served by the API |
-| **Size** | 49 source modules · 23 test modules · **533 tests passing** |
+| **Size** | 53 source modules · 25 test modules · **596 tests passing** |
 | **Static analysis** | `ruff` clean · `mypy --strict` clean |
 | **Document date** | 26 August 2026 |
 
@@ -42,6 +42,7 @@
 24. [What production would still require](#24-what-production-would-still-require)
 25. [How to run the project](#25-how-to-run-the-project)
 26. [Appendices](#26-appendices)
+27. [Phase 2: dashboards, reports, exports and a confidence score](#27-phase-2-dashboards-reports-exports-and-a-confidence-score)
 
 ---
 
@@ -418,6 +419,7 @@ Owned and written only by `app_rw`. The agent's SQL tool is never handed this co
 | `findings` | findings and their materiality | `finding_id`, `run_id`, `statement`, `material`, `evidence_query_ids` |
 | `hypotheses` | competing explanations and their outcomes | `hypothesis_id`, `finding_id`, `statement`, `status`, `test_query_ids`, `reasoning` |
 | `charts` | generated figures | `chart_id`, `query_id`, `title`, `chart_type`, `spec` |
+| `reports` | a saved analysis, frozen as it read when it was saved | `report_id`, `run_id`, `name`, `created_by`, `created_at`, `updated_at`, `snapshot` |
 | LangGraph checkpoint tables | durable graph state | managed by `PostgresSaver` |
 
 `sql_audit` records **rejected** queries as well as executed ones. A run in which the guard
@@ -993,6 +995,11 @@ limiting on question submission.
 | `POST /v1/runs/{id}/answer` | reply to a clarification the agent asked for |
 | `GET /v1/metrics` | the approved KPI catalogue |
 | `GET /v1/schema` | what is queryable |
+| `GET /v1/dashboard/summary` | totals, outcome rates, recent questions, most-used definitions, recent findings |
+| `POST /v1/reports` · `GET /v1/reports` | save a finished run as a report; list what is saved |
+| `GET` · `PATCH` · `DELETE /v1/reports/{id}` | read one, rename it, delete it |
+| `GET /v1/reports/{id}/export.pdf` · `.xlsx` | the report as a file, evidence included |
+| `GET /v1/charts/{id}/export.png` | one chart, as rendered when it was built |
 | `GET /healthz` · `GET /readyz` | liveness; readiness including the read-only check |
 
 `202` rather than `200` on a question is deliberate: an investigation takes minutes and can pause
@@ -1054,7 +1061,7 @@ PNG and the screen. A test asserts the page requests nothing from a third party.
 
 ### 18.1 Composition
 
-**533 tests** across 23 modules.
+**596 tests** across 25 modules.
 
 | Suite | Focus |
 |---|---|
@@ -1639,9 +1646,142 @@ And the brief's own definition of "production ready":
 - PostgreSQL documentation — roles and privileges, `default_transaction_read_only`,
   `statement_timeout`, `EXPLAIN`, `pg_constraint`
 - FastAPI, Plotly, pandas, pydantic-settings, structlog documentation
+- reportlab and openpyxl documentation — the PDF and workbook exporters
 - MDN Web Docs — SVG paths and arcs, for the chart renderer in `app.js`
 
 ---
+
+---
+
+## 27. Phase 2: dashboards, reports, exports and a confidence score
+
+Phase 1 delivered an agent an analyst could trust. Phase 2 is about what happens *after* an
+answer: whether the work can be found again, handed to somebody else, and read with a stated
+degree of confidence. Four additions, and one thing deliberately not built.
+
+### 27.1 The dashboard
+
+`GET /v1/dashboard/summary` returns the whole page in one response: totals, outcome rates, the
+most recent questions, the most-used metric definitions, and the most recent findings.
+
+**One endpoint rather than six** because a dashboard assembled from six requests shows six
+different moments, and the totals then disagree with the rows beneath them for no reason the
+reader can see.
+
+Two decisions in the arithmetic are worth stating:
+
+- **The success rate is over *finished* runs only.** Counting a run still in flight as a failure
+  would make the number drop every time somebody asked a question. What is still open — in
+  flight, waiting on a clarification, waiting on an approval — is reported separately rather than
+  folded into either rate.
+- **"Most used metrics" is read from `tool_calls`, not parsed out of SQL.** `metric_query` is the
+  only place an approved definition is invoked *by name*, so the count is a fact. Recovering
+  metric names from statement text would be guessing at what a query was computing.
+
+### 27.2 Saved reports
+
+A report is a **snapshot, not a pointer**. Keeping a `run_id` and rendering live on every read
+would have been less code, and it would mean a saved report silently changes when anything behind
+it changes — a metric definition revised, the confidence arithmetic tuned. Somebody who saved a
+report in March and re-opened it in June would then read different figures under the same name,
+with nothing to tell them so.
+
+So the snapshot carries the question, the answer, the confidence with its factors, the findings
+and the explanations tested against them, the charts, the SQL behind every cited number, **the
+metric definition versions used**, and the timestamp it was taken. The `run_id` stays alongside
+it, so the live trace is one hop away for anyone who wants to compare.
+
+`name` is the only mutable field: renaming is a labelling decision, and editing what a report
+*reports* would defeat the point of saving it. Two database constraints enforce the rest — a
+report cannot have a blank name (it could never be found again) and its snapshot must contain a
+question and an answer.
+
+### 27.3 Exports
+
+| Format | What it is for | What it carries |
+|---|---|---|
+| **PDF** | reading, and handing to somebody | conclusion, confidence *with its factors*, what was ruled out, caveats, findings and their tested explanations, the definitions used, and every cited statement in full |
+| **Excel** | working with the numbers | seven sheets — Summary, Confidence, Findings, Evidence, All queries, Definitions, Charts — with the SQL as a **column**, so it survives copy-paste into a query tool |
+| **PNG** | one chart on its own | the image rendered when the chart was built, byte for byte |
+
+Both document exporters build from the **snapshot**, never from the live database — which is what
+makes an exported file mean the same thing as the report it came from.
+
+Two details that are easy to get wrong and were not:
+
+- The PDF lists charts by name rather than embedding them. The image bytes live on the chart row,
+  not in the snapshot, and a report that quietly rendered a *regenerated* chart would be showing
+  a picture that no longer matches the figures beside it.
+- A chart with no stored image is a **404, not an empty file**. An empty PNG download looks like
+  a broken image; a 404 says what happened.
+
+### 27.4 The confidence score
+
+Every answer now carries a score out of 100 alongside the band the agent stated, and the factors
+that produced it.
+
+| Component | Weight | Applies when |
+|---|---|---|
+| Supporting queries | 30 | always — counted on what the answer *cites*, since evidence nobody points at is not evidence |
+| Explanations tested | 30 | only when there is a material finding |
+| An alternative actually refuted | 15 | only when there is a material finding |
+| What the data allowed | 25 | always — truncated results, empty results, refused and escalated statements each cost, and each is named |
+| What is still open | 20 | always — unexplained findings, inconclusive explanations, a budget that ran out |
+
+The score is the weighted average **over applicable components only**. A single-metric lookup has
+no hypotheses to test, and scoring it as though it had failed to test any would be wrong; that is
+why a factual question can reach 100 and a diagnostic question with one untested explanation
+cannot.
+
+Two ceilings sit on top of the arithmetic, and both are statements about the investigation rather
+than about the sum:
+
+- **Thin evidence.** However clean a single query's result was, it is still a single query, so one
+  supporting query caps the score below the high band. Without this a one-query lookup with
+  nothing wrong with it reaches high confidence on the strength of having no problems, which is
+  not the same as having evidence.
+- **The agent's own band.** `reconcile` already lowered confidence where the tests could not
+  separate two explanations, and `synthesize` lowered it again for an unexplained material
+  finding. Those are judgements, and arithmetic must not overturn them. The stated band is a
+  ceiling, never a floor.
+
+The score is computed **on read, from the trace**, rather than frozen when the run finished. A
+change to the scoring therefore applies to every run in the history instead of only to new ones,
+and there is no stored number that can disagree with the trace it came from.
+
+**What the score does not measure, stated plainly.** It measures the *shape* of the investigation
+— how much evidence, how many explanations, how clean the data — not whether the prose recites
+those numbers correctly. The live run described in §22 scored 100% on that basis while its
+conclusion misquoted ten of twelve monthly figures. The fix for that was the one in §22 (carrying
+the result rows into the synthesis context); the score's honest scope is what the run *did*, and
+a reader should treat it as a measure of diligence rather than of arithmetic.
+
+### 27.5 What was deliberately not built
+
+**Publishing.** Exporting a file is a download; publishing a report is approval point 4, and that
+gate has no implementation behind it. A Publish button that quietly skipped the gate would be
+worse than not offering one, so the interface says so where the button would have been.
+
+**Authentication.** The requirement described a dashboard "after login". There is no login in this
+system, and adding one to satisfy the wording would have meant shipping session handling, password
+storage and an account model that nothing else in the project needs. The name recorded against an
+approval decision is still typed by the person making it — which is the only place identity
+actually matters here, and it is honest about being unverified.
+
+### 27.6 The interface
+
+The dashboard, the reports list and the confidence display are in the same hand-written frontend
+described in §17. Three additions worth naming:
+
+- **Empty states that say what to do next.** "No data" is a dead end; a sentence naming the action
+  is not. Every list routes through one helper, so an empty page never looks like a broken one.
+- **Loading skeletons** in the shape of the content, so a slow page does not look like a stuck one.
+- **The confidence ring with its factors beside it**, both on the result card and in full under
+  View Details — because the factors are the point, not the percentage.
+
+A test asserts the page actually *calls* each new endpoint. It is a cheap assertion and it has
+caught the real failure mode twice in this project: something built, shipped, and never wired to
+a caller — which no backend test can see.
 
 ## Closing note
 

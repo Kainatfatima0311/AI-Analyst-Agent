@@ -22,6 +22,10 @@ runtime flow of a single question, the data model, and the deployment topology.
 │                        GET  /v1/runs/{id}/trace  full reconstruction        │
 │   routes/approvals.py  POST /v1/runs/{id}/approve | /reject                  │
 │   routes/catalog.py    GET  /v1/metrics, GET /v1/schema                      │
+│   dashboard            GET  /v1/dashboard/summary                            │
+│   reports              POST/GET/PATCH/DELETE /v1/reports[/{id}]              │
+│                        GET  /v1/reports/{id}/export.pdf | .xlsx              │
+│                        GET  /v1/charts/{id}/export.png                       │
 │   routes/health.py     GET  /healthz, /readyz                                │
 │   Middleware: request id, structlog binding, typed error envelopes, rate     │
 │   limiting on question submission.                                          │
@@ -139,6 +143,7 @@ than dropped at load time, so the policy itself is reviewable and testable.
 | `sql_audit` | One row per query considered — allowed, rejected or escalated | `query_id`, `run_id`, `sql`, `rewritten_sql`, `purpose`, `verdict`, `reasons`, `row_count`, `truncated`, `duration_ms` |
 | `approvals` | One row per approval request | `approval_id`, `run_id`, `kind`, `payload`, `status`, `requested_at`, `decided_at`, `decided_by`, `reason` |
 | `findings` | Findings and their hypotheses | `finding_id`, `run_id`, `statement`, `material`, `evidence_query_ids`, and per-hypothesis status and reasoning |
+| `reports` | a saved analysis, frozen as it read when it was saved | `report_id`, `run_id`, `name`, `created_by`, `created_at`, `updated_at`, `snapshot` |
 | LangGraph checkpoint tables | Durable graph state | managed by `PostgresSaver` |
 
 `sql_audit` records **rejected** queries too. A run in which the guard blocked three attempts is

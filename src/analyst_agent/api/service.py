@@ -10,6 +10,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from analyst_agent.agent import confidence
 from analyst_agent.api import schemas
 from analyst_agent.db import repository as repo
 from analyst_agent.observability.logging import get_logger
@@ -54,9 +55,15 @@ def run_view(run_id: uuid.UUID) -> schemas.RunOut:
                     sql=query.get("rewritten_sql") or query["sql_text"],
                 )
             )
+        # Computed here rather than frozen when the run finished, so a change to the scoring
+        # applies to every run in the history instead of only to new ones - and so there is no
+        # stored number that can disagree with the trace it came from.
+        score = confidence.from_trace(trace, stored)
         answer = schemas.AnswerOut(
             conclusion=stored["conclusion"],
             confidence=stored.get("confidence", "low"),
+            confidence_score=score.score,
+            confidence_detail=schemas.ConfidenceOut(**score.as_dict()),
             caveats=stored.get("caveats", []),
             refuted=stored.get("refuted", []),
             evidence=evidence,

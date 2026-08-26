@@ -25,6 +25,7 @@ Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known is
 | 14 | Final technical report | ✅ | 2026-08-26 | `docs(report)` / `v1.0` |
 | 15 | Design-conformance pass — four gaps closed | ✅ | 2026-08-26 | `feat(agent)` — tool-calling nodes, `metric_query`, wired gates, distinctness |
 | 16 | Groq backend, evidence in context, new interface | ✅ | 2026-08-26 | `feat(llm)` · `feat(ui)` — provider swap, result rows reach synthesis, hand-written frontend |
+| 17 | **Phase 2** — dashboards, reports, exports, confidence scoring | ✅ | 2026-08-26 | `feat(product)` — `/v1/dashboard/summary`, saved reports, PDF/Excel/PNG, 0-100 score |
 
 ## Key metrics (filled in as they are measured)
 
@@ -1048,3 +1049,103 @@ slices that do not sum to the whole are a lie the picture cannot show.
 clicking a suggestion card raised an exception, because every test *rendered* pages and none
 *clicked* anything. Rendering a page is not using it; the interaction tests came second, which is
 one round too late.
+
+
+### Step 17 — Phase 2: dashboards, reports, exports and a confidence score
+
+**Status:** ✅ Done · **Date:** 2026-08-26 · **Commit:** `feat(product)`
+
+Phase 1 delivered an agent an analyst could trust. This step is about what happens *after* an
+answer: whether the work can be found again, handed to somebody else, and read with a stated
+degree of confidence. **596 tests pass** across 53 source modules; `ruff` and `mypy` clean.
+
+**1 · The dashboard.** `GET /v1/dashboard/summary` returns the whole page in one response —
+totals, outcome rates, recent questions, most-used metric definitions, recent findings. One
+endpoint rather than six, because a dashboard assembled from six requests shows six different
+moments and the totals then disagree with the rows beneath them.
+
+Two decisions in the arithmetic are the substance of it. The success rate is over **finished**
+runs only: counting an in-flight run as a failure would make the number drop every time somebody
+asked a question, so what is still open is reported separately instead. And "most used metrics"
+is read from `tool_calls` where the tool was `metric_query` — the only place a definition is
+invoked *by name*. Recovering metric names from statement text would be guessing at what a query
+was computing.
+
+**2 · Saved reports, as snapshots rather than pointers.** Keeping a `run_id` and rendering live on
+every read would have been less code and less storage. It would also mean a saved report silently
+changes when anything behind it changes — a definition revised, the confidence weights tuned — so
+somebody who saved a report in March and re-opened it in June would read different figures under
+the same name with nothing to tell them so.
+
+Migration 004 therefore stores the question, the answer, the confidence with its factors, the
+findings and their tested explanations, the charts, the SQL behind every cited number, the metric
+definition **versions** used, and the timestamp. `name` is the only mutable field: renaming is a
+labelling decision, and editing what a report reports would defeat the point of saving it. Two
+constraints hold the rest — a report cannot have a blank name, and its snapshot must contain a
+question and an answer. A test proves the snapshot does not move when the run behind it does.
+
+**3 · Exports.** PDF to read, Excel to work with (seven sheets, SQL as a *column* so it survives
+copy-paste into a query tool), PNG for a chart on its own. Both document exporters build from the
+snapshot, never from the live database, which is what makes an exported file mean the same thing
+as the report it came from.
+
+Two details worth recording. The PDF names charts rather than embedding them: the image bytes live
+on the chart row, not in the snapshot, and a report that quietly rendered a *regenerated* chart
+would show a picture that no longer matches the figures beside it. And a chart with no stored
+image is a **404, not an empty file** — an empty PNG download looks like a broken image, while a
+404 says what happened.
+
+**4 · A confidence score with its working shown.** Five components — supporting queries,
+explanations tested, whether an alternative was actually refuted, what the data allowed, what is
+still open — weighted and averaged over the ones that **apply**. A single-metric lookup has no
+hypotheses to test, and scoring it as though it had failed to test any would be wrong; that is why
+a factual question can reach 100 and a diagnostic question with one untested explanation cannot.
+
+Two ceilings sit above the arithmetic, and the tests are what forced both:
+
+* **Thin evidence.** The first version gave a one-query answer with clean data 79% — high
+  confidence earned by having nothing wrong with it, which is not the same as having evidence. One
+  supporting query now caps the score below the high band.
+* **A run with no queries scored 27%**, because "nothing left unresolved" is vacuously true when
+  nothing was attempted. An answer resting on nothing now scores nothing.
+
+A third fix came from the same pass: a material finding with fewer than two tested explanations
+*is* an unexplained finding, so that is derived inside the scorer rather than trusted from the
+caller — the score cannot disagree with the graph's own rule.
+
+The score is computed **on read, from the trace**, not frozen when the run finished. A change to
+the weights therefore applies to the whole history, and there is no stored number that can
+disagree with the trace it came from.
+
+**What the score does not measure, stated because it matters.** It measures the *shape* of the
+investigation, not whether the prose recites the numbers correctly. The live run from Step 16
+scores 100% on this basis while its conclusion misquoted ten of twelve monthly figures — the fix
+for that was carrying the result rows into the synthesis context, not the score. Read it as a
+measure of diligence, not of arithmetic.
+
+**5 · The interface.** Dashboard, reports list with rename/delete/export, the confidence ring with
+its factors beside it, empty states that name the next action rather than saying "no data", and
+loading skeletons in the shape of the content. A test asserts the page actually *calls* each new
+endpoint — cheap, and it has now caught the same failure mode twice in this project: something
+built, shipped and never wired to a caller, which no backend test can see.
+
+**Two things deliberately not built, and why.**
+
+* **Publishing.** Exporting is a download; publishing is approval point 4, and that gate has no
+  implementation behind it. A Publish button that skipped the gate would be worse than no button,
+  so the interface says so where the button would have been.
+* **Authentication.** The requirement said "a dashboard after login". There is no login here, and
+  adding one to satisfy the wording would mean shipping session handling, password storage and an
+  account model nothing else in the project needs. The name recorded against an approval is still
+  typed by the person making it — the one place identity actually matters — and it is honest about
+  being unverified.
+
+**One requirement was redirected rather than followed.** Point 5 asked for the Streamlit UI to be
+improved. Streamlit was removed in Step 16 at the user's decision, after three rounds of failing to
+reproduce a supplied design on top of a widget toolkit's markup. The improvements went into the
+hand-written frontend that replaced it, which is the same UI in every respect that matters and the
+only one that exists.
+
+**Screenshots** are listed in the requirement and are not in the repository: they cannot be
+captured from here. The interface runs at `/app/` on the API's own port, so any reader can see the
+live thing rather than an image of it — and `docs/` describes each page in text.

@@ -66,7 +66,6 @@ const state = {
   runId: null,
   suggestPage: 0,
   who: localStorage.getItem("who") || "analyst@example.com",
-  bookmarks: new Set(JSON.parse(localStorage.getItem("bookmarks") || "[]")),
   timer: null,
 };
 
@@ -139,6 +138,84 @@ const money = (value) => {
   if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(0) + "K";
   return n.toFixed(Math.abs(n) < 10 ? 2 : 0);
 };
+
+
+/* ------------------------------------------------------- states & confidence */
+
+/**
+ * An empty state that says what to do next.
+ *
+ * "No data" is a dead end; a sentence naming the action is not. Every list on this page routes
+ * through here so an empty page never looks like a broken one.
+ */
+function empty(title, hint, action) {
+  return `<div class="card empty">
+    <div class="empty-mark">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 19V5M4 19h16"/><path d="M8 15V10M13 15V7M18 15v-3"/></svg></div>
+    <div class="empty-title">${esc(title)}</div>
+    <div class="empty-hint">${esc(hint)}</div>
+    ${action ? `<button class="btn btn-sm" data-page="${action.page}">${esc(action.label)}</button>` : ""}
+  </div>`;
+}
+
+/** Grey blocks in the shape of the content, so a slow page does not look like a stuck one. */
+function skeleton(rows = 3) {
+  return `<div class="card mcard">${Array.from({ length: rows })
+    .map((_, i) => `<div class="skel" style="width:${92 - i * 14}%"></div>`)
+    .join("")}</div>`;
+}
+
+function loading(target, rows = 3) {
+  target.innerHTML = skeleton(rows);
+}
+
+/**
+ * The confidence score, with the factors that produced it.
+ *
+ * The ring is the headline and the factors are the point: a percentage on its own is a claim,
+ * and a percentage next to the four things it was computed from is something a reader can
+ * disagree with. Factors that do not apply to this run are dropped rather than shown as
+ * failures — a factual question has no hypotheses to test.
+ */
+function confidenceBlock(detail, compact) {
+  if (!detail) return "";
+  const score = Number(detail.score || 0);
+  const tone = detail.band === "high" ? "var(--good)" : detail.band === "medium" ? "var(--warn)" : "var(--bad)";
+  const circumference = 2 * Math.PI * 26;
+  const filled = (score / 100) * circumference;
+
+  const ring = `<svg width="72" height="72" viewBox="0 0 72 72" role="img"
+      aria-label="Confidence ${score} percent">
+    <circle cx="36" cy="36" r="26" fill="none" stroke="var(--border)" stroke-width="7"/>
+    <circle cx="36" cy="36" r="26" fill="none" stroke="${tone}" stroke-width="7"
+            stroke-linecap="round" stroke-dasharray="${filled.toFixed(1)} ${circumference.toFixed(1)}"
+            transform="rotate(-90 36 36)"/>
+    <text x="36" y="40" text-anchor="middle" font-size="16" font-weight="650"
+          fill="var(--text)">${score}%</text></svg>`;
+
+  const factors = (detail.factors || [])
+    .filter((factor) => factor.weight > 0)
+    .map(
+      (factor) => `<div class="factor ${factor.passed ? "yes" : "no"}">
+        <span class="mark">${factor.passed ? "✓" : "•"}</span>
+        <span class="what">${esc(factor.label)}</span>
+        <span class="weight">${Math.round(factor.earned)}/${Math.round(factor.weight)}</span>
+      </div>`
+    )
+    .join("");
+
+  const capped = detail.capped_by
+    ? `<div class="capped">Held at ${esc(detail.capped_by)} — a stated band is a ceiling, never a
+        floor.</div>`
+    : "";
+
+  return `<div class="confidence ${compact ? "compact" : ""}">
+    <div class="conf-ring">${ring}<div class="conf-band" style="color:${tone}">${esc(detail.band || "")}</div></div>
+    <div class="conf-factors">${factors || '<div class="empty-hint">No factors recorded.</div>'}${capped}</div>
+  </div>`;
+}
 
 /* ------------------------------------------------------------ svg charts */
 
@@ -297,13 +374,19 @@ function chartPanel(chart, fallbackTitle) {
   if (!read) {
     return `<div class="chart-panel">${head}<div class="plot-blank">This chart has no data.</div></div>`;
   }
+  const download = chart.chart_id
+    ? `<a class="panel-download" href="/v1/charts/${chart.chart_id}/export.png"
+         title="Download this chart as a PNG">PNG</a>`
+    : "";
   if (read.kind === "pie") {
-    return `<div class="chart-panel">${head}${donut(read.labels, read.values, read.colours)}</div>`;
+    return `<div class="chart-panel">${head}${download}
+      ${donut(read.labels, read.values, read.colours)}</div>`;
   }
   const legend = read.name
     ? `<div class="legend"><span class="swatch" style="background:${read.colour}"></span>${esc(read.name)}</div>`
     : "";
-  return `<div class="chart-panel">${head}${legend}${areaChart(read.x, read.y, read.colour)}</div>`;
+  return `<div class="chart-panel">${head}${download}${legend}
+    ${areaChart(read.x, read.y, read.colour)}</div>`;
 }
 
 /* ------------------------------------------------------------- rendering */
@@ -459,12 +542,10 @@ async function renderResult() {
                   <circle cx="18" cy="5.5" r="2.6"/><circle cx="6" cy="12" r="2.6"/><circle cx="18" cy="18.5" r="2.6"/>
                   <path d="M8.3 10.8 15.7 6.8M8.3 13.2l7.4 4"/></svg>Share</button>
               <button class="btn btn-sm" id="save-btn">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="${
-                  state.bookmarks.has(run.run_id) ? "currentColor" : "none"
-                }" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M6 3.8h12a1 1 0 0 1 1 1V21l-7-4.2L5 21V4.8a1 1 0 0 1 1-1Z"/></svg>${
-                    state.bookmarks.has(run.run_id) ? "Saved" : "Save"
-                  }</button>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M6 3.8h12a1 1 0 0 1 1 1V21l-7-4.2L5 21V4.8a1 1 0 0 1 1-1Z"/></svg>Save
+                  report</button>
               <button class="btn btn-primary btn-sm" id="details-btn">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                      stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -489,7 +570,8 @@ async function renderResult() {
     ${
       answered
         ? `<div class="result-body">
-            <div><div class="panel-title">Key Takeaways</div>${takeaways(run)}</div>
+            <div><div class="panel-title">Key Takeaways</div>${takeaways(run)}
+              ${confidenceBlock(run.answer.confidence_detail, true)}</div>
             ${chartPanel(charts[0], "Trend")}
             ${chartPanel(charts[1], "Breakdown")}
           </div>
@@ -588,6 +670,8 @@ function renderDetails(run, trace) {
     <div class="conclusion">${esc(answer.conclusion)}</div>
     <div style="margin-top:11px">${confidenceChip(answer.confidence)}
       <span class="chip" style="margin-left:5px">${(answer.evidence || []).length} queries cited</span></div>
+    <div class="sub-head">How confident, and why</div>
+    ${confidenceBlock(answer.confidence_detail, false)}
     ${
       (answer.refuted || []).length
         ? `<div class="sub-head">Ruled out</div><ul class="plain">${answer.refuted
@@ -624,11 +708,23 @@ function wireResult(run, trace) {
 
   const save = $("save-btn");
   if (save)
-    save.addEventListener("click", () => {
-      if (state.bookmarks.has(run.run_id)) state.bookmarks.delete(run.run_id);
-      else state.bookmarks.add(run.run_id);
-      localStorage.setItem("bookmarks", JSON.stringify([...state.bookmarks]));
-      renderResult();
+    save.addEventListener("click", async () => {
+      // A report is a snapshot taken now, not a bookmark: what it says has to stay what it said.
+      const name = (prompt("Name this report", run.question) || "").trim();
+      if (name === "") return;
+      save.disabled = true;
+      try {
+        const created = await post("/v1/reports", {
+          run_id: run.run_id,
+          name,
+          saved_by: state.who,
+        });
+        toast(`Saved as "${created.name}". Find it under Reports.`);
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        save.disabled = false;
+      }
     });
 
   const open = () => {
@@ -734,50 +830,136 @@ function go(page) {
 }
 
 const PAGE_LOADERS = {
+  /**
+   * The dashboard, from one request.
+   *
+   * `/v1/dashboard/summary` returns the counts and the three lists together, so the totals cannot
+   * disagree with the rows beneath them — six requests would show six different moments.
+   */
   async dashboard() {
     const box = $("page-dashboard");
-    const runs = await get("/v1/runs?limit=50").catch(() => []);
-    if (!runs.length) {
-      box.innerHTML = `<div class="card mcard" style="margin-top:22px">No runs yet. Ask a question and this fills in.</div>`;
+    loading(box, 4);
+    let data;
+    try {
+      data = await get("/v1/dashboard/summary?recent=6");
+    } catch (error) {
+      box.innerHTML = empty("The dashboard could not load", error.message);
       return;
     }
-    const counts = {};
-    runs.forEach((r) => (counts[r.status] = (counts[r.status] || 0) + 1));
-    const tokens = runs.reduce((a, r) => a + (r.tokens_in || 0) + (r.tokens_out || 0), 0);
-    const durations = runs.filter((r) => r.duration_ms).map((r) => r.duration_ms).sort((a, b) => a - b);
-    const median = durations.length ? Math.round(durations[Math.floor(durations.length / 2)] / 1000) : null;
+    const { totals, outcomes } = data;
+    if (!totals.analyses) {
+      box.innerHTML = empty(
+        "Nothing analysed yet",
+        "Ask a business question and this page fills in with what the agent did, what it cost, " +
+          "and which definitions it used.",
+        { page: "ask", label: "Ask a question" }
+      );
+      wirePageLinks(box);
+      return;
+    }
 
-    const stat = (label, value) => `<div class="stat"><div class="value">${value}</div><div class="label">${label}</div></div>`;
-    const bars = Object.entries(counts)
-      .sort((a, b) => b[1] - a[1])
-      .map(([key, count]) => {
-        const [label, icon, colour] = STATUS[key] || [key, "·", "#6b6a66"];
-        const width = (count / Math.max(...Object.values(counts))) * 100;
-        return `<div style="margin-bottom:11px">
-          <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px">
-            <span>${icon} ${esc(label)}</span><span style="color:var(--text-muted)">${count}</span></div>
-          <div style="height:9px;background:var(--sunken);border-radius:5px;overflow:hidden">
-            <div style="width:${width}%;height:100%;background:${colour};border-radius:5px"></div></div></div>`;
-      })
-      .join("");
+    const stat = (label, value, note) => `<div class="stat">
+      <div class="value">${value}</div><div class="label">${esc(label)}</div>
+      ${note ? `<div class="stat-note">${esc(note)}</div>` : ""}</div>`;
 
-    box.innerHTML = `<div class="card stat-strip">
-        ${stat("Runs", runs.length)}${stat("Completed", counts.completed || 0)}
-        ${stat("Awaiting a decision", counts.awaiting_approval || 0)}
-        ${stat("Asked you something", counts.clarifying || 0)}
-        ${stat("Tokens", tokens.toLocaleString())}${stat("Median run", median ? median + "s" : "—")}
+    const median = totals.median_duration_ms
+      ? `${Math.round(totals.median_duration_ms / 1000)}s`
+      : "—";
+
+    // Success and failure over *finished* runs, with what is still open stated separately rather
+    // than folded in: an in-flight run is not a failure, and a run waiting on a person is not one
+    // either.
+    const rate = outcomes.success_rate == null ? "—" : `${outcomes.success_rate}%`;
+    const open = totals.in_flight + totals.clarifying + totals.awaiting_approval;
+
+    const bar = (label, count, colour) => {
+      const width = outcomes.finished ? (count / outcomes.finished) * 100 : 0;
+      return `<div class="meter-row">
+        <div class="meter-head"><span>${esc(label)}</span><span class="meter-n">${count}</span></div>
+        <div class="meter"><div style="width:${width}%;background:${colour}"></div></div></div>`;
+    };
+
+    box.innerHTML = `
+      <div class="card stat-strip">
+        ${stat("Analyses", totals.analyses)}
+        ${stat("Saved reports", totals.saved_reports)}
+        ${stat("Success rate", rate, `${outcomes.finished} finished`)}
+        ${stat("Open", open, "in flight or waiting on you")}
+        ${stat("Queries run", totals.queries.toLocaleString())}
+        ${stat("Tokens", totals.tokens.toLocaleString())}
+        ${stat("Median run", median)}
       </div>
+
       <div class="grid-2">
-        <div class="card mcard"><div class="panel-title">Runs by outcome</div>${bars}</div>
-        <div class="card mcard"><div class="panel-title">Latest</div>
-          ${runs
-            .slice(0, 6)
-            .map(
-              (r) => `<div class="takeaway"><span class="t">${esc(r.question)}<br>
-                <span class="sub" style="font-size:11.5px">${ago(r.created_at)}</span></span></div>`
-            )
-            .join("")}</div>
+        <div class="card mcard">
+          <div class="panel-title">Outcomes</div>
+          ${bar("Completed", totals.completed, "var(--good)")}
+          ${bar("Truncated by budget", totals.truncated, "var(--warn)")}
+          ${bar("Failed", totals.failed, "var(--bad)")}
+          <div class="kv" style="margin-top:10px">Over finished runs only. A run still in flight
+            or waiting on a decision is neither a success nor a failure yet.</div>
+        </div>
+
+        <div class="card mcard">
+          <div class="panel-title">Most used definitions</div>
+          ${
+            data.top_metrics.length
+              ? data.top_metrics
+                  .map(
+                    (metric) => `<div class="row-line">
+                      <span class="mono" style="color:var(--text)">${esc(metric.metric)}</span>
+                      <span class="when">${metric.uses} use${metric.uses === 1 ? "" : "s"} ·
+                        ${ago(metric.last_used)}</span></div>`
+                  )
+                  .join("")
+              : `<div class="empty-hint">No approved metric has been computed yet. The agent
+                  reaches for one whenever a question names a business term it recognises.</div>`
+          }
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card mcard">
+          <div class="panel-title">Recent questions</div>
+          ${
+            data.recent_questions
+              .map(
+                (run) => `<button class="row-line as-button" data-run="${run.run_id}">
+                  <span class="q">${esc(run.question)}</span>
+                  <span style="display:flex;gap:10px;align-items:center">
+                    <span class="when">${ago(run.created_at)}</span>${chip(run.status)}</span>
+                </button>`
+              )
+              .join("") || `<div class="empty-hint">Nothing asked yet.</div>`
+          }
+        </div>
+
+        <div class="card mcard">
+          <div class="panel-title">Recent insights
+            <span class="hint">what the agent noticed</span></div>
+          ${
+            data.recent_insights.length
+              ? data.recent_insights
+                  .map(
+                    (insight) => `<button class="takeaway as-button ${
+                      insight.material ? "material" : "good"
+                    }" data-run="${insight.run_id}">
+                      <span class="t">${esc(insight.statement)}
+                        <span class="sub">${
+                          insight.material ? "· needed explaining" : ""
+                        } · ${ago(insight.created_at)}</span></span></button>`
+                  )
+                  .join("")
+              : `<div class="empty-hint">No findings recorded yet. A finding is something the
+                  agent noticed in a result and had to account for.</div>`
+          }
+        </div>
       </div>`;
+
+    box.querySelectorAll("[data-run]").forEach((element) =>
+      element.addEventListener("click", () => openRun(element.dataset.run))
+    );
+    wirePageLinks(box);
   },
 
   async saved() {
@@ -861,53 +1043,106 @@ const PAGE_LOADERS = {
         .join("")}`;
   },
 
+  /**
+   * Saved reports: open, rename, delete, export.
+   *
+   * A report is a snapshot rather than a pointer, so what is listed here is what each report
+   * *said when it was saved*. The run it came from is one click away for anyone who wants to see
+   * whether anything has changed since.
+   */
   async reports() {
     const box = $("page-reports");
-    const runs = (await get("/v1/runs?limit=40").catch(() => [])).filter(
-      (r) => r.status === "completed"
-    );
-    if (!runs.length) {
-      box.innerHTML = `<div class="card mcard" style="margin-top:22px">No completed analyses yet.</div>`;
+    loading(box, 4);
+    let reports;
+    try {
+      reports = await get("/v1/reports?limit=60");
+    } catch (error) {
+      box.innerHTML = empty("Reports could not load", error.message);
       return;
     }
-    box.innerHTML = `<div class="kv" style="margin:20px 0 12px">${runs.length} completed.
-        Read-only: publishing a report is approval point 4, and that gate has no implementation
-        behind it — a button that quietly skipped it would be worse than none.</div>
-      <select class="field" id="report-pick" style="max-width:560px">${runs
-        .map((r) => `<option value="${r.run_id}">${esc(r.question)} · ${ago(r.created_at)}</option>`)
-        .join("")}</select>
-      <div id="report-body" style="margin-top:18px"></div>`;
+    if (!reports.length) {
+      box.innerHTML = empty(
+        "No saved reports",
+        "Finish an analysis and press Save report. A report keeps the answer, its confidence, " +
+          "the charts and the SQL behind every number — frozen as it read when you saved it.",
+        { page: "ask", label: "Ask a question" }
+      );
+      wirePageLinks(box);
+      return;
+    }
 
-    const draw = async (runId) => {
-      const [run, trace] = await Promise.all([
-        get(`/v1/runs/${runId}`),
-        get(`/v1/runs/${runId}/trace`),
-      ]);
-      const charts = run.charts || [];
-      $("report-body").innerHTML = `<div class="card" style="padding:20px 22px">
-        <div class="result-title">${esc(run.question)}</div>
-        <div class="result-meta">${chip(run.status)}<span class="when">${ago(run.created_at)}</span></div>
-        <div class="result-body" style="padding:16px 0 0">
-          <div><div class="panel-title">Key Takeaways</div>${takeaways(run)}</div>
-          ${chartPanel(charts[0], "Trend")}${chartPanel(charts[1], "Breakdown")}</div>
-        ${
-          run.answer
-            ? `<div class="sub-head">Conclusion</div>
-               <div class="conclusion">${esc(run.answer.conclusion)}</div>
-               <div style="margin-top:10px">${confidenceChip(run.answer.confidence)}</div>
-               <div class="sub-head">Evidence</div>
-               ${(run.answer.evidence || [])
-                 .map(
-                   (e) => `<div class="q-row"><div class="purpose">${esc(e.purpose)}</div>
-                     <div class="idline">${esc(e.query_id)} · ${e.row_count} rows</div>
-                     <pre class="sql">${esc(e.sql)}</pre></div>`
-                 )
-                 .join("")}`
-            : ""
-        }</div>`;
-    };
-    draw(runs[0].run_id);
-    $("report-pick").addEventListener("change", (event) => draw(event.target.value));
+    box.innerHTML = `<div class="kv" style="margin:20px 0 14px">${reports.length} saved.
+        Exports carry the findings, the charts and the evidence section — publishing is not
+        offered, because that is approval point 4 and the gate behind it is not built.</div>
+      <div id="report-list"></div>
+      <div id="report-body" style="margin-top:20px"></div>`;
+
+    const list = $("report-list");
+    list.innerHTML = reports
+      .map(
+        (report) => `<div class="card report-row" data-report="${report.report_id}">
+          <div class="report-main">
+            <button class="report-open" data-open="${report.report_id}">
+              <span class="q">${esc(report.name)}</span>
+              <span class="when">${esc(report.question || "")}</span>
+            </button>
+            <div class="report-meta">
+              <span class="when">${ago(report.created_at)}</span>
+              ${
+                report.confidence_score != null
+                  ? `<span class="chip">${report.confidence_score}% confidence</span>`
+                  : ""
+              }
+              <span class="chip">${report.queries} quer${report.queries === 1 ? "y" : "ies"}</span>
+              ${report.charts ? `<span class="chip">${report.charts} chart${report.charts === 1 ? "" : "s"}</span>` : ""}
+            </div>
+          </div>
+          <div class="report-actions">
+            <a class="btn btn-sm" href="/v1/reports/${report.report_id}/export.pdf">PDF</a>
+            <a class="btn btn-sm" href="/v1/reports/${report.report_id}/export.xlsx">Excel</a>
+            <button class="btn btn-sm" data-rename="${report.report_id}">Rename</button>
+            <button class="btn btn-sm danger" data-delete="${report.report_id}">Delete</button>
+          </div>
+        </div>`
+      )
+      .join("");
+
+    list.querySelectorAll("[data-open]").forEach((button) =>
+      button.addEventListener("click", () => showReport(button.dataset.open))
+    );
+
+    list.querySelectorAll("[data-rename]").forEach((button) =>
+      button.addEventListener("click", async () => {
+        const row = reports.find((r) => r.report_id === button.dataset.rename);
+        const name = (prompt("Rename this report", row ? row.name : "") || "").trim();
+        if (!name) return;
+        try {
+          await request("PATCH", `/v1/reports/${button.dataset.rename}`, { name });
+          toast("Renamed.");
+          PAGE_LOADERS.reports();
+        } catch (error) {
+          toast(error.message);
+        }
+      })
+    );
+
+    list.querySelectorAll("[data-delete]").forEach((button) =>
+      button.addEventListener("click", async () => {
+        const row = reports.find((r) => r.report_id === button.dataset.delete);
+        // Confirmed, because deleting a report cannot be undone: the snapshot is the only copy of
+        // what the answer said at that moment.
+        if (!confirm(`Delete "${row ? row.name : "this report"}"? This cannot be undone.`)) return;
+        try {
+          await request("DELETE", `/v1/reports/${button.dataset.delete}`);
+          toast("Deleted.");
+          PAGE_LOADERS.reports();
+        } catch (error) {
+          toast(error.message);
+        }
+      })
+    );
+
+    showReport(reports[0].report_id);
   },
 
   async settings() {
@@ -944,6 +1179,155 @@ const PAGE_LOADERS = {
     $("theme-btn-2").addEventListener("click", toggleTheme);
   },
 };
+
+
+/** PATCH and DELETE, which the two-verb helpers above do not cover. */
+async function request(method, path, body) {
+  const response = await fetch(API + path, {
+    method,
+    headers: body ? { "content-type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!response.ok) {
+    let detail = await response.text();
+    try {
+      const parsed = JSON.parse(detail);
+      detail = parsed.detail || detail;
+      if (Array.isArray(detail)) detail = detail.map((d) => d.msg || "").join("; ");
+    } catch (_) {}
+    throw new Error(detail || response.statusText);
+  }
+  return response.status === 204 ? null : response.json();
+}
+
+/** One saved report, read from its snapshot rather than from the live run. */
+async function showReport(reportId) {
+  const body = $("report-body");
+  if (!body) return;
+  loading(body, 5);
+  let report;
+  try {
+    report = await get(`/v1/reports/${reportId}`);
+  } catch (error) {
+    body.innerHTML = empty("That report could not be loaded", error.message);
+    return;
+  }
+  const snapshot = report.snapshot || {};
+  const answer = snapshot.answer || {};
+  const charts = snapshot.charts || [];
+
+  body.innerHTML = `<div class="card" style="padding:20px 22px">
+    <div class="result-head" style="padding:0 0 14px">
+      <div>
+        <div class="result-title">${esc(report.name)}</div>
+        <div class="result-meta">${chip(snapshot.status)}
+          <span class="when">saved ${ago(snapshot.saved_at)}</span>
+          <span class="when">· asked ${ago(snapshot.asked_at)}</span></div>
+      </div>
+      <div class="result-actions">
+        <a class="btn btn-sm" href="/v1/reports/${reportId}/export.pdf">Export PDF</a>
+        <a class="btn btn-sm" href="/v1/reports/${reportId}/export.xlsx">Export Excel</a>
+        <button class="btn btn-sm" data-run="${snapshot.run_id}">Open the run</button>
+      </div>
+    </div>
+
+    <div class="result-body" style="padding:0">
+      <div><div class="panel-title">Key Takeaways</div>
+        ${
+          (snapshot.findings || []).length
+            ? snapshot.findings
+                .map(
+                  (finding, index) => `<div class="takeaway ${
+                    finding.material ? "material" : "good"
+                  }"><span class="tile" style="background:${
+                    Object.values(TILES)[index % 4][0]
+                  };color:${Object.values(TILES)[index % 4][1]}">${
+                    finding.material ? "!" : "✓"
+                  }</span><span class="t">${esc(finding.statement)}</span></div>`
+                )
+                .join("")
+            : `<div class="empty-hint">No separate findings were recorded.</div>`
+        }
+        ${confidenceBlock(snapshot.confidence, true)}</div>
+      ${chartPanel(charts[0], "Trend")}
+      ${chartPanel(charts[1], "Breakdown")}
+    </div>
+
+    <div class="sub-head">Conclusion</div>
+    <div class="conclusion">${esc(answer.conclusion)}</div>
+    ${
+      (answer.refuted || []).length
+        ? `<div class="sub-head">Ruled out</div><ul class="plain">${answer.refuted
+            .map((item) => `<li>${esc(item)}</li>`)
+            .join("")}</ul>`
+        : ""
+    }
+    ${
+      (answer.caveats || []).length
+        ? `<div class="sub-head">Caveats</div><ul class="plain">${answer.caveats
+            .map((item) => `<li>${esc(item)}</li>`)
+            .join("")}</ul>`
+        : ""
+    }
+    ${
+      (snapshot.metrics_used || []).length
+        ? `<div class="sub-head">Approved definitions used</div><ul class="plain">${snapshot.metrics_used
+            .map(
+              (metric) =>
+                `<li>${esc(metric.metric)}${metric.version ? ` · ${esc(metric.version)}` : ""}</li>`
+            )
+            .join("")}</ul>`
+        : ""
+    }
+    <div class="sub-head">The SQL behind each cited number</div>
+    ${
+      (snapshot.evidence || [])
+        .map(
+          (item) => `<div class="q-row">
+            <div class="purpose">${esc(item.purpose)}</div>
+            <div class="idline">${esc(item.query_id)} · ${item.row_count} rows${
+            item.definition_version ? ` · ${esc(item.definition_version)}` : ""
+          }</div>
+            <pre class="sql">${esc(item.sql)}</pre></div>`
+        )
+        .join("") || `<div class="empty-hint">This answer cited no queries.</div>`
+    }
+    ${
+      (snapshot.queries_considered || []).some((q) => q.verdict !== "allowed")
+        ? `<div class="sub-head">Queries that did not run</div>${snapshot.queries_considered
+            .filter((q) => q.verdict !== "allowed")
+            .map(
+              (item) => `<div class="q-row">
+                <div class="purpose">${esc(item.purpose)}</div>
+                <div style="margin:5px 0">${chip(item.verdict)}</div>
+                ${
+                  (item.reasons || []).length
+                    ? `<ul class="plain">${item.reasons
+                        .map((r) => `<li>${esc(r)}</li>`)
+                        .join("")}</ul>`
+                    : ""
+                }
+                <pre class="sql">${esc(item.sql)}</pre></div>`
+            )
+            .join("")}`
+        : ""
+    }
+  </div>`;
+
+  body.querySelectorAll("[data-run]").forEach((button) =>
+    button.addEventListener("click", () => openRun(button.dataset.run))
+  );
+}
+
+/** Wire any element carrying data-page inside a freshly rendered container. */
+function wirePageLinks(container) {
+  container.querySelectorAll("[data-page]").forEach((element) =>
+    element.addEventListener("click", (event) => {
+      event.preventDefault();
+      go(element.dataset.page);
+    })
+  );
+}
 
 /* ---------------------------------------------------------------- health */
 
