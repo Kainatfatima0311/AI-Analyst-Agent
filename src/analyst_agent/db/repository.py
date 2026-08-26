@@ -69,14 +69,26 @@ class StepHandle:
 # --- runs -------------------------------------------------------------------
 
 
-def create_run(question: str, requested_by: str | None = None, thread_id: str | None = None) -> uuid.UUID:
+def create_run(
+    question: str,
+    requested_by: str | None = None,
+    thread_id: str | None = None,
+    organization_id: uuid.UUID | None = None,
+) -> uuid.UUID:
+    """Start a run, owned by an organisation.
+
+    `COALESCE` to the default organisation rather than raising: the column is NOT NULL with a
+    default in the schema, and a caller that has not been taught about tenancy yet should produce
+    a row owned by the organisation that was implicitly there before Phase 3 - not a 500.
+    """
     run_id = uuid.uuid4()
     thread = thread_id or f"run-{run_id}"
     with rw_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO agent.runs (run_id, thread_id, question, requested_by) "
-            "VALUES (%s, %s, %s, %s)",
-            (run_id, thread, question, requested_by),
+            "INSERT INTO agent.runs (run_id, thread_id, question, requested_by, organization_id) "
+            "VALUES (%s, %s, %s, %s, "
+            "COALESCE(%s, '00000000-0000-0000-0000-000000000001'::uuid))",
+            (run_id, thread, question, requested_by, organization_id),
         )
     log.info("run created", run_id=str(run_id), thread_id=thread)
     return run_id
@@ -511,7 +523,7 @@ def get_run(run_id: uuid.UUID) -> dict[str, Any] | None:
         return cur.fetchone()
 
 
-def get_trace(run_id: uuid.UUID) -> dict[str, Any]:
+def get_trace(run_id: uuid.UUID, organization_id: uuid.UUID | None = None) -> dict[str, Any]:
     """The full reconstruction of a run.
 
     This is what `GET /v1/runs/{id}/trace` returns and what the UI's evidence drawer is built
@@ -519,7 +531,16 @@ def get_trace(run_id: uuid.UUID) -> dict[str, Any]:
     reviewer asks is usually "what did it try", not only "what did it do".
     """
     with rw_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT * FROM agent.runs WHERE run_id = %s", (run_id,))
+        if organization_id is None:
+            cur.execute("SELECT * FROM agent.runs WHERE run_id = %s", (run_id,))
+        else:
+            # Scoped in the WHERE clause, and a miss is indistinguishable from "no such run".
+            # Answering 403 for another tenant's run would confirm that it exists, which is how a
+            # probe turns into an enumeration of somebody else's questions.
+            cur.execute(
+                "SELECT * FROM agent.runs WHERE run_id = %s AND organization_id = %s",
+                (run_id, organization_id),
+            )
         run = cur.fetchone()
         if run is None:
             raise KeyError(f"no such run: {run_id}")
@@ -566,14 +587,26 @@ def get_trace(run_id: uuid.UUID) -> dict[str, Any]:
     return trace
 
 
-def recent_runs(limit: int = 50) -> list[dict[str, Any]]:
+def recent_runs(
+    limit: int = 50, organization_id: uuid.UUID | None = None
+) -> list[dict[str, Any]]:
+    """Recent runs, scoped to one organisation when given.
+
+    The filter is in the SQL rather than applied to the result: filtering afterwards means the
+    rows were fetched, and a fetched row is one a later refactor can forget to drop.
+    """
+    columns = (
+        "SELECT run_id, thread_id, question, status, created_at, finished_at, duration_ms, "
+        "queries_used, tokens_in, tokens_out, cost_usd FROM agent.runs "
+    )
     with rw_conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT run_id, thread_id, question, status, created_at, finished_at, duration_ms, "
-            "queries_used, tokens_in, tokens_out, cost_usd FROM agent.runs "
-            "ORDER BY created_at DESC LIMIT %s",
-            (limit,),
-        )
+        if organization_id is None:
+            cur.execute(columns + "ORDER BY created_at DESC LIMIT %s", (limit,))
+        else:
+            cur.execute(
+                columns + "WHERE organization_id = %s ORDER BY created_at DESC LIMIT %s",
+                (organization_id, limit),
+            )
         return list(cur.fetchall())
 
 
@@ -590,7 +623,9 @@ def resumable_runs() -> list[dict[str, Any]]:
 # --- dashboard ---------------------------------------------------------------
 
 
-def dashboard_summary(recent: int = 6) -> dict[str, Any]:
+def dashboard_summary(
+    recent: int = 6, organization_id: uuid.UUID | None = None
+) -> dict[str, Any]:
     """Everything the dashboard shows, in one round trip.
 
     One function and one connection rather than six endpoints: a dashboard that fires six
@@ -613,32 +648,42 @@ def dashboard_summary(recent: int = 6) -> dict[str, Any]:
             "coalesce(sum(tokens_in + tokens_out), 0) AS tokens, "
             "coalesce(sum(queries_used), 0) AS queries, "
             "coalesce(sum(cost_usd), 0) AS cost_usd "
-            "FROM agent.runs"
+            "FROM agent.runs WHERE (%s::uuid IS NULL OR organization_id = %s)",
+            (organization_id, organization_id),
         )
         totals = cur.fetchone() or {}
 
         cur.execute(
             "SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) AS median_ms "
-            "FROM agent.runs WHERE duration_ms IS NOT NULL"
+            "FROM agent.runs WHERE duration_ms IS NOT NULL "
+            "AND (%s::uuid IS NULL OR organization_id = %s)",
+            (organization_id, organization_id),
         )
         median = (cur.fetchone() or {}).get("median_ms")
 
-        cur.execute("SELECT count(*) AS n FROM agent.reports")
+        cur.execute(
+            "SELECT count(*) AS n FROM agent.reports "
+            "WHERE (%s::uuid IS NULL OR organization_id = %s)",
+            (organization_id, organization_id),
+        )
         reports = (cur.fetchone() or {}).get("n", 0)
 
         cur.execute(
             "SELECT run_id, question, status, created_at, duration_ms "
-            "FROM agent.runs ORDER BY created_at DESC LIMIT %s",
-            (recent,),
+            "FROM agent.runs WHERE (%s::uuid IS NULL OR organization_id = %s) "
+            "ORDER BY created_at DESC LIMIT %s",
+            (organization_id, organization_id, recent),
         )
         questions = list(cur.fetchall())
 
         cur.execute(
-            "SELECT arguments ->> 'metric' AS metric, count(*) AS uses, "
-            "max(started_at) AS last_used "
-            "FROM agent.tool_calls "
-            "WHERE tool = 'metric_query' AND arguments ->> 'metric' IS NOT NULL "
-            "GROUP BY 1 ORDER BY uses DESC, metric LIMIT 8"
+            "SELECT t.arguments ->> 'metric' AS metric, count(*) AS uses, "
+            "max(t.started_at) AS last_used "
+            "FROM agent.tool_calls t JOIN agent.runs r ON r.run_id = t.run_id "
+            "WHERE t.tool = 'metric_query' AND t.arguments ->> 'metric' IS NOT NULL "
+            "AND (%s::uuid IS NULL OR r.organization_id = %s) "
+            "GROUP BY 1 ORDER BY uses DESC, metric LIMIT 8",
+            (organization_id, organization_id),
         )
         metrics = list(cur.fetchall())
 
@@ -646,8 +691,9 @@ def dashboard_summary(recent: int = 6) -> dict[str, Any]:
         cur.execute(
             "SELECT f.finding_id, f.run_id, f.statement, f.material, f.created_at, r.question "
             "FROM agent.findings f JOIN agent.runs r ON r.run_id = f.run_id "
+            "WHERE (%s::uuid IS NULL OR r.organization_id = %s) "
             "ORDER BY f.created_at DESC LIMIT %s",
-            (recent,),
+            (organization_id, organization_id, recent),
         )
         insights = list(cur.fetchall())
 
@@ -689,51 +735,91 @@ def dashboard_summary(recent: int = 6) -> dict[str, Any]:
 
 
 def save_report(
-    run_id: uuid.UUID, name: str, snapshot: dict[str, Any], created_by: str | None = None
+    run_id: uuid.UUID,
+    name: str,
+    snapshot: dict[str, Any],
+    created_by: str | None = None,
+    organization_id: uuid.UUID | None = None,
+    saved_by_user_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
     """Freeze a run as a report. See db/migrations/004 for why it is a snapshot."""
     report_id = uuid.uuid4()
     with rw_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO agent.reports (report_id, run_id, name, created_by, snapshot) "
-            "VALUES (%s, %s, %s, %s, %s)",
-            (report_id, run_id, name.strip(), created_by, Jsonb(snapshot)),
+            "INSERT INTO agent.reports (report_id, run_id, name, created_by, snapshot, "
+            "organization_id, saved_by_user_id) VALUES (%s, %s, %s, %s, %s, "
+            "COALESCE(%s, '00000000-0000-0000-0000-000000000001'::uuid), %s)",
+            (
+                report_id,
+                run_id,
+                name.strip(),
+                created_by,
+                Jsonb(snapshot),
+                organization_id,
+                saved_by_user_id,
+            ),
         )
     log.info("report saved", report_id=str(report_id), run_id=str(run_id), name=name.strip())
     return report_id
 
 
-def list_reports(limit: int = 50) -> list[dict[str, Any]]:
+def list_reports(
+    limit: int = 50,
+    organization_id: uuid.UUID | None = None,
+    viewer_user_id: uuid.UUID | None = None,
+) -> list[dict[str, Any]]:
     """Report rows without their snapshots.
 
     The snapshot of a long run is large, and a list of forty of them would be megabytes to render
     a page of names. The counts a list needs are read out of the snapshot in SQL instead.
     """
+    columns = (
+        "SELECT report_id, run_id, name, created_by, created_at, updated_at, visibility, "
+        "snapshot ->> 'question' AS question, "
+        "snapshot -> 'confidence' ->> 'score' AS confidence_score, "
+        "jsonb_array_length(coalesce(snapshot -> 'charts', '[]'::jsonb)) AS charts, "
+        "jsonb_array_length(coalesce(snapshot -> 'evidence', '[]'::jsonb)) AS queries "
+        "FROM agent.reports "
+    )
     with rw_conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT report_id, run_id, name, created_by, created_at, updated_at, "
-            "snapshot ->> 'question' AS question, "
-            "snapshot -> 'confidence' ->> 'score' AS confidence_score, "
-            "jsonb_array_length(coalesce(snapshot -> 'charts', '[]'::jsonb)) AS charts, "
-            "jsonb_array_length(coalesce(snapshot -> 'evidence', '[]'::jsonb)) AS queries "
-            "FROM agent.reports ORDER BY created_at DESC LIMIT %s",
-            (limit,),
-        )
+        if organization_id is None:
+            cur.execute(columns + "ORDER BY created_at DESC LIMIT %s", (limit,))
+        else:
+            # A private report is the saver's; team and public belong to the organisation. Both
+            # halves of that rule are in the SQL, so a route cannot implement only one of them.
+            cur.execute(
+                columns
+                + "WHERE organization_id = %s AND (visibility <> 'private' "
+                "OR saved_by_user_id IS NULL OR saved_by_user_id = %s) "
+                "ORDER BY created_at DESC LIMIT %s",
+                (organization_id, viewer_user_id, limit),
+            )
         return list(cur.fetchall())
 
 
-def get_report(report_id: uuid.UUID) -> dict[str, Any] | None:
+def get_report(
+    report_id: uuid.UUID, organization_id: uuid.UUID | None = None
+) -> dict[str, Any] | None:
     with rw_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT * FROM agent.reports WHERE report_id = %s", (report_id,))
+        if organization_id is None:
+            cur.execute("SELECT * FROM agent.reports WHERE report_id = %s", (report_id,))
+        else:
+            cur.execute(
+                "SELECT * FROM agent.reports WHERE report_id = %s AND organization_id = %s",
+                (report_id, organization_id),
+            )
         return cur.fetchone()
 
 
-def rename_report(report_id: uuid.UUID, name: str) -> bool:
-    """The only mutable field. Returns False if there is no such report."""
+def rename_report(
+    report_id: uuid.UUID, name: str, organization_id: uuid.UUID | None = None
+) -> bool:
+    """The only mutable field. False if there is no such report *for this organisation*."""
     with rw_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "UPDATE agent.reports SET name = %s, updated_at = now() WHERE report_id = %s",
-            (name.strip(), report_id),
+            "UPDATE agent.reports SET name = %s, updated_at = now() WHERE report_id = %s "
+            "AND (%s::uuid IS NULL OR organization_id = %s)",
+            (name.strip(), report_id, organization_id, organization_id),
         )
         renamed = cur.rowcount == 1
     if renamed:
@@ -741,16 +827,22 @@ def rename_report(report_id: uuid.UUID, name: str) -> bool:
     return renamed
 
 
-def delete_report(report_id: uuid.UUID) -> bool:
+def delete_report(report_id: uuid.UUID, organization_id: uuid.UUID | None = None) -> bool:
     with rw_conn() as conn, conn.cursor() as cur:
-        cur.execute("DELETE FROM agent.reports WHERE report_id = %s", (report_id,))
+        cur.execute(
+            "DELETE FROM agent.reports WHERE report_id = %s "
+            "AND (%s::uuid IS NULL OR organization_id = %s)",
+            (report_id, organization_id, organization_id),
+        )
         deleted = cur.rowcount == 1
     if deleted:
         log.info("report deleted", report_id=str(report_id))
     return deleted
 
 
-def chart_png(chart_id: uuid.UUID) -> tuple[bytes, str] | None:
+def chart_png(
+    chart_id: uuid.UUID, organization_id: uuid.UUID | None = None
+) -> tuple[bytes, str] | None:
     """The stored PNG for one chart, with its title.
 
     Rendered once when the chart was built rather than on demand: the frame it came from may have
@@ -758,7 +850,13 @@ def chart_png(chart_id: uuid.UUID) -> tuple[bytes, str] | None:
     a different picture under the same id.
     """
     with rw_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT png, title FROM agent.charts WHERE chart_id = %s", (chart_id,))
+        # Joined to runs for the organisation: a chart id is guessable in principle, and an
+        # image is data.
+        cur.execute(
+            "SELECT c.png, c.title FROM agent.charts c JOIN agent.runs r ON r.run_id = c.run_id "
+            "WHERE c.chart_id = %s AND (%s::uuid IS NULL OR r.organization_id = %s)",
+            (chart_id, organization_id, organization_id),
+        )
         row = cur.fetchone()
     if row is None or row["png"] is None:
         return None

@@ -94,6 +94,24 @@ class Settings(BaseSettings):
     max_tokens_per_run: int = 400_000
     approval_timeout_seconds: int = 1_800
 
+    # --- Tenancy and secrets (Phase 3) -------------------------------------
+    secrets_key: SecretStr | None = None
+    """Fernet key for data-source credentials.
+
+    Lives in the environment, never in the database: a key stored beside the ciphertext it
+    protects is obfuscation, and one backup dump would contain both halves.
+    """
+
+    require_authentication: bool = False
+    """When false, an unauthenticated request is the default organisation's owner.
+
+    Not named ``require_api_key``: that is already a *method* on this class, for the model
+    provider's key, and the collision made pydantic validate the method as a boolean field.
+
+    A real decision rather than a gap: there is no login in this system, and a deployment serving
+    more than one company sets this to true, at which point there is no anonymous path at all.
+    """
+
     # --- Service -----------------------------------------------------------
     api_host: str = "0.0.0.0"  # noqa: S104 — bound inside a container, published by compose
     api_port: int = 8000
@@ -110,7 +128,7 @@ class Settings(BaseSettings):
             return tuple(part.strip() for part in value.split(",") if part.strip())
         return value
 
-    @field_validator("anthropic_api_key", "groq_api_key", mode="before")
+    @field_validator("anthropic_api_key", "groq_api_key", "secrets_key", mode="before")
     @classmethod
     def _blank_key_is_absent(cls, value: object) -> object:
         """A blank key in .env must read as absent, not as a configured empty key.
@@ -167,6 +185,7 @@ class Settings(BaseSettings):
         for secret in (
             self.anthropic_api_key,
             self.groq_api_key,
+            self.secrets_key,
             self.db_rw_dsn,
             self.db_ro_dsn,
         ):

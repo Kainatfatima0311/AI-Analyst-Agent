@@ -33,9 +33,15 @@ def _approval(row: dict[str, Any]) -> schemas.ApprovalOut:
     )
 
 
-def run_view(run_id: uuid.UUID) -> schemas.RunOut:
-    """A run as a caller sees it, findings and hypotheses stitched together."""
-    trace = repo.get_trace(run_id)
+def run_view(
+    run_id: uuid.UUID, organization_id: uuid.UUID | None = None
+) -> schemas.RunOut:
+    """A run as a caller sees it, findings and hypotheses stitched together.
+
+    The organisation is passed down to the trace query rather than checked here: a filter
+    applied after the rows are fetched is one a later refactor can drop.
+    """
+    trace = repo.get_trace(run_id, organization_id=organization_id)
     run = trace["run"]
 
     queries = {q["query_id"]: q for q in trace["queries"]}
@@ -123,9 +129,11 @@ def run_view(run_id: uuid.UUID) -> schemas.RunOut:
     )
 
 
-def trace_view(run_id: uuid.UUID) -> schemas.TraceOut:
+def trace_view(
+    run_id: uuid.UUID, organization_id: uuid.UUID | None = None
+) -> schemas.TraceOut:
     """The full reconstruction, including what the guard refused."""
-    trace = repo.get_trace(run_id)
+    trace = repo.get_trace(run_id, organization_id=organization_id)
     return schemas.TraceOut(
         run_id=trace["run"]["run_id"],
         summary=trace["summary"],

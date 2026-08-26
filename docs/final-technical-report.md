@@ -19,7 +19,7 @@ Fourteen planned steps; thirteen complete, one built but unmeasured.
 
 | | |
 |---|---|
-| Tests | **596 passing** — 53 source files, `ruff` and `mypy` clean |
+| Tests | **653 passing** — 59 source files, `ruff` and `mypy` clean |
 | Hostile queries rejected | **79 / 79**, with no database required to prove it |
 | Read-only role assertions | **29 / 29** |
 | Approved metrics | 12, each executing and each passing the guard |
@@ -215,7 +215,7 @@ repro rather than assumed.
 
 Every node is a closure over an LLM and a tool registry. This is not a testing nicety — the
 routing is where the policy lives, and routing has to be asserted deterministically rather than
-through whatever a model says on the day. It is the reason 596 tests pass with no API key, and
+through whatever a model says on the day. It is the reason 653 tests pass with no API key, and
 the reason the recovery path could be tested at all: the graph object is discarded and rebuilt
 between parking and resuming, which is what a process restart amounts to.
 

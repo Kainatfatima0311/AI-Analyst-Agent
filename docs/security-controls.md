@@ -134,6 +134,43 @@ level rather than in application code.
 
 ---
 
+### C11 — Tenant isolation
+
+Every tenant-scoped query filters by `organization_id` **in SQL**, not in the route. A row with no
+organisation is treated as *not* ours, and another organisation's resource answers 404 rather than
+403 — a 403 confirms the resource exists, and a sequence of those is an enumeration.
+
+*Verified by* `tests/integration/test_tenancy.py`: two real organisations, checked from both
+directions, across runs, traces, reports, exports, chart images, dashboard counts, data sources,
+alerts and the audit trail. It has already caught a real hole (a saved report landing in the wrong
+organisation).
+
+### C12 — Credentials encrypted at rest
+
+Data source configuration is stored as Fernet ciphertext with the key held **outside** the
+database, and the `connection_config` column is not in the select list of any read the API uses.
+What a caller sees is an allowlisted redaction; a withheld field is *named*, not starred out.
+
+*Verified by* reading the column straight from the table and asserting the plaintext is absent, and
+by asserting a tampered ciphertext fails to decrypt rather than decrypting to something plausible.
+
+### C13 — Bearer secrets stored only as hashes
+
+API keys and share tokens are SHA-256 hashes. Nothing needs to read them back, so nothing can —
+including an operator with a database dump, who could otherwise *act as* a customer.
+
+*Verified by* asserting a token never appears in any listing, that the prefix identifies without
+revealing, and that removing a member revokes their keys in the same transaction.
+
+### C14 — Append-only audit trail
+
+`agent.audit_log` records the actor, the action, the target and a redacted detail. The repository
+exposes no update or delete path — a trail somebody can edit is not one — and an unauthenticated
+action is labelled as such so a demo cannot be mistaken for a person.
+
+*Verified by* asserting the repository surface contains only `audit` and `audit_entries`, that a
+credential never reaches the trail, and that the trail is isolated per organisation.
+
 ## 3. Threat-to-control matrix
 
 | Threat | Primary control | Backstop |

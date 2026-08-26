@@ -22,6 +22,13 @@ runtime flow of a single question, the data model, and the deployment topology.
 │                        GET  /v1/runs/{id}/trace  full reconstruction        │
 │   routes/approvals.py  POST /v1/runs/{id}/approve | /reject                  │
 │   routes/catalog.py    GET  /v1/metrics, GET /v1/schema                      │
+│   tenancy              GET  /v1/me · POST /v1/organizations                  │
+│   team                 GET  /v1/team · POST /v1/team/invite                  │
+│                        PATCH /v1/team/member/{id} · keys                     │
+│   data sources         CRUD /v1/data-sources  (config encrypted at rest)     │
+│   sharing              /v1/reports/{id}/shares · GET /v1/shared/{token}      │
+│   alerts               CRUD /v1/alerts · POST /v1/alerts/{id}/check          │
+│   security             GET  /v1/audit                                        │
 │   dashboard            GET  /v1/dashboard/summary                            │
 │   reports              POST/GET/PATCH/DELETE /v1/reports[/{id}]              │
 │                        GET  /v1/reports/{id}/export.pdf | .xlsx              │
@@ -32,6 +39,15 @@ runtime flow of a single question, the data model, and the deployment topology.
 └───────────────────────────────┬──────────────────────────────────────────────┘
                                 │ start / resume by thread_id
 ┌───────────────────────────────▼──────────────────────────────────────────────┐
+│ Tenancy — security/ + db/tenancy.py                                          │
+│   principal.py     Principal(organization, user, role); the role ladder       │
+│   crypto.py        Fernet for configs, SHA-256 for keys and share tokens      │
+│   tenancy.py       every read filters by organization_id, in SQL              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Monitoring — alerts/                                                         │
+│   detect.py        drop/spike against a baseline; below/above absolute        │
+│                    watches an approved metric, never free SQL                │
+├──────────────────────────────────────────────────────────────────────────────┤
 │ Orchestration — agent/                                                       │
 │   graph.py         the LangGraph state graph and its policy edges            │
 │   state.py         AnalystState                                              │
@@ -143,6 +159,12 @@ than dropped at load time, so the policy itself is reviewable and testable.
 | `sql_audit` | One row per query considered — allowed, rejected or escalated | `query_id`, `run_id`, `sql`, `rewritten_sql`, `purpose`, `verdict`, `reasons`, `row_count`, `truncated`, `duration_ms` |
 | `approvals` | One row per approval request | `approval_id`, `run_id`, `kind`, `payload`, `status`, `requested_at`, `decided_at`, `decided_by`, `reason` |
 | `findings` | Findings and their hypotheses | `finding_id`, `run_id`, `statement`, `material`, `evidence_query_ids`, and per-hypothesis status and reasoning |
+| `organizations` · `users` · `organization_members` | tenants, people, and the role between them | `organization_id`, `user_id`, `role` |
+| `api_keys` | how a caller proves which organisation it is | `key_hash` (SHA-256 only), `prefix`, `revoked_at` |
+| `data_sources` | postgres / csv / excel, per organisation | `connection_config` (Fernet ciphertext), `summary` (redacted) |
+| `report_shares` | a share is a capability with a lifetime | `token_hash`, `audience`, `expires_at`, `revoked_at`, `use_count` |
+| `alerts` · `alert_events` | a threshold is configuration; a breach is history | `metric`, `comparison`, `threshold`, `status` / `triggered`, `observed`, `baseline` |
+| `audit_log` | append-only: who did what, in which organisation | `actor_label`, `action`, `target_id`, `detail` |
 | `reports` | a saved analysis, frozen as it read when it was saved | `report_id`, `run_id`, `name`, `created_by`, `created_at`, `updated_at`, `snapshot` |
 | LangGraph checkpoint tables | Durable graph state | managed by `PostgresSaver` |
 

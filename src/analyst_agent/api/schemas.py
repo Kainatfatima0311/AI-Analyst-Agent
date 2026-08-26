@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class AskRequest(BaseModel):
@@ -277,6 +277,7 @@ class ReportSummaryOut(BaseModel):
     report_id: uuid.UUID
     run_id: uuid.UUID
     name: str
+    visibility: Literal["private", "team", "public"] = "private"
     question: str | None = None
     created_by: str | None = None
     created_at: dt.datetime
@@ -361,3 +362,278 @@ class DashboardOut(BaseModel):
     recent_questions: list[RecentQuestionOut] = Field(default_factory=list)
     top_metrics: list[MetricUsageOut] = Field(default_factory=list)
     recent_insights: list[InsightOut] = Field(default_factory=list)
+
+
+# --- tenancy ------------------------------------------------------------------
+
+
+class OrganizationOut(BaseModel):
+    organization_id: uuid.UUID
+    name: str
+    slug: str
+    created_at: dt.datetime
+    members: int = 0
+
+
+class WhoAmIOut(BaseModel):
+    """What the caller is, as the server sees it.
+
+    ``authenticated`` is reported rather than implied: with ``REQUIRE_AUTHENTICATION=false`` a
+    request with no key is the default organisation's owner, and a page that could not tell the
+    difference would show a demo as though it were a tenant.
+    """
+
+    organization: OrganizationOut
+    user_id: uuid.UUID
+    email: str
+    role: Literal["owner", "admin", "analyst", "viewer"]
+    authenticated: bool
+    permissions: list[str] = Field(
+        default_factory=list, description="The named actions this role may take."
+    )
+
+
+class CreateOrganizationRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(min_length=1, max_length=120)
+    owner_email: EmailStr
+
+
+class MemberOut(BaseModel):
+    user_id: uuid.UUID
+    email: str
+    display_name: str | None = None
+    role: Literal["owner", "admin", "analyst", "viewer"]
+    joined_at: dt.datetime
+    invited_by_email: str | None = None
+    analyses: int = 0
+    reports: int = 0
+    last_active_at: dt.datetime | None = None
+
+
+class TeamOut(BaseModel):
+    organization: OrganizationOut
+    members: list[MemberOut] = Field(default_factory=list)
+
+
+class InviteRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    email: EmailStr
+    role: Literal["admin", "analyst", "viewer"] = Field(
+        default="analyst",
+        description=(
+            "Owner is not invitable: it is transferred by promoting an existing member, so an "
+            "organisation cannot acquire a second owner by a typo in an invitation."
+        ),
+    )
+
+
+class InviteOut(BaseModel):
+    user_id: uuid.UUID
+    email: str
+    role: str
+    created: bool
+    message: str
+
+
+class UpdateMemberRequest(BaseModel):
+    """A role change, or a removal. One endpoint, because both are "change this membership"."""
+
+    model_config = {"extra": "forbid"}
+
+    role: Literal["owner", "admin", "analyst", "viewer"] | None = None
+    remove: bool = False
+
+
+class ApiKeyOut(BaseModel):
+    key_id: uuid.UUID
+    name: str
+    prefix: str
+    email: str
+    created_at: dt.datetime
+    last_used_at: dt.datetime | None = None
+    revoked_at: dt.datetime | None = None
+
+
+class IssuedApiKeyOut(ApiKeyOut):
+    token: str = Field(description="Shown once. Only its hash is stored, so this cannot be re-read.")
+
+
+class IssueApiKeyRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(min_length=1, max_length=120)
+    email: EmailStr | None = Field(
+        default=None, description="Whose key this is. Defaults to the caller."
+    )
+
+
+# --- data sources -------------------------------------------------------------
+
+
+class DataSourceOut(BaseModel):
+    """A source, without its credentials.
+
+    ``summary`` is an allowlisted redaction — host, database, user, filename. A password is not
+    starred out and returned; it is absent, because a masked value in a response is still a
+    statement about its length.
+    """
+
+    data_source_id: uuid.UUID
+    name: str
+    type: Literal["postgres", "csv", "excel"]
+    summary: dict[str, Any] = Field(default_factory=dict)
+    created_at: dt.datetime
+    last_checked_at: dt.datetime | None = None
+    last_status: str | None = None
+
+
+class CreateDataSourceRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(min_length=1, max_length=120)
+    type: Literal["postgres", "csv", "excel"]
+    config: dict[str, Any] = Field(
+        description=(
+            "Connection details. Encrypted at rest with SECRETS_KEY and never returned by any "
+            "endpoint - only the allowlisted summary comes back."
+        )
+    )
+
+
+# --- sharing ------------------------------------------------------------------
+
+
+class ShareRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    audience: Literal["team", "public"] = "team"
+    expires_in_hours: int | None = Field(
+        default=None,
+        ge=1,
+        le=24 * 365,
+        description="Left out, the link does not expire. A link with no end is a decision, so it is the explicit one.",
+    )
+
+
+class ShareOut(BaseModel):
+    share_id: uuid.UUID
+    audience: str
+    prefix: str
+    url: str
+    created_at: dt.datetime
+    expires_at: dt.datetime | None = None
+    revoked_at: dt.datetime | None = None
+    last_used_at: dt.datetime | None = None
+    use_count: int = 0
+    created_by_email: str | None = None
+
+
+class IssuedShareOut(ShareOut):
+    token: str = Field(description="Shown once; only its hash is stored.")
+
+
+class VisibilityRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    visibility: Literal["private", "team", "public"]
+
+
+class SharedReportOut(BaseModel):
+    """A report read through a share link.
+
+    Deliberately narrower than `ReportOut`: no organisation id, no run id, no saver. Somebody
+    holding a link is not a member, and the answer is what was shared - not the identifiers around
+    it.
+    """
+
+    name: str
+    audience: str
+    created_at: dt.datetime
+    expires_at: dt.datetime | None = None
+    snapshot: dict[str, Any]
+
+
+# --- alerts -------------------------------------------------------------------
+
+
+class CreateAlertRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(min_length=1, max_length=120)
+    metric: str = Field(description="An approved metric name. An alert never watches free SQL.")
+    comparison: Literal["drop", "spike", "below", "above"]
+    threshold: float = Field(
+        gt=0,
+        description=(
+            "For drop/spike, a percentage against the recent baseline. For below/above, an "
+            "absolute value."
+        ),
+    )
+    dimension: str | None = Field(
+        default=None, description="The period dimension to watch. Defaults to month."
+    )
+    window_periods: int = Field(
+        default=6,
+        ge=2,
+        le=48,
+        description=(
+            "How many periods form the baseline. At least two: a one-period window compares a "
+            "value to itself and can never fire."
+        ),
+    )
+
+
+class AlertEventOut(BaseModel):
+    event_id: uuid.UUID
+    triggered: bool
+    observed: float | None = None
+    baseline: float | None = None
+    change_pct: float | None = None
+    period: str | None = None
+    detail: str
+    query_id: uuid.UUID | None = None
+    created_at: dt.datetime
+
+
+class AlertOut(BaseModel):
+    alert_id: uuid.UUID
+    name: str
+    metric: str
+    dimension: str | None = None
+    comparison: str
+    threshold: float
+    window_periods: int
+    status: Literal["active", "paused", "triggered"]
+    created_at: dt.datetime
+    last_checked_at: dt.datetime | None = None
+    last_triggered_at: dt.datetime | None = None
+    last_detail: str | None = None
+    times_triggered: int = 0
+
+
+class UpdateAlertRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    status: Literal["active", "paused"]
+
+
+class AlertCheckOut(BaseModel):
+    alert: AlertOut
+    event: AlertEventOut
+
+
+# --- audit --------------------------------------------------------------------
+
+
+class AuditEntryOut(BaseModel):
+    entry_id: int
+    actor_label: str
+    actor_user_id: uuid.UUID | None = None
+    action: str
+    target_type: str | None = None
+    target_id: str | None = None
+    detail: dict[str, Any] = Field(default_factory=dict)
+    created_at: dt.datetime

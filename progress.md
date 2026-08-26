@@ -26,6 +26,7 @@ Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known is
 | 15 | Design-conformance pass — four gaps closed | ✅ | 2026-08-26 | `feat(agent)` — tool-calling nodes, `metric_query`, wired gates, distinctness |
 | 16 | Groq backend, evidence in context, new interface | ✅ | 2026-08-26 | `feat(llm)` · `feat(ui)` — provider swap, result rows reach synthesis, hand-written frontend |
 | 17 | **Phase 2** — dashboards, reports, exports, confidence scoring | ✅ | 2026-08-26 | `feat(product)` — `/v1/dashboard/summary`, saved reports, PDF/Excel/PNG, 0-100 score |
+| 18 | **Phase 3** — organisations, data sources, sharing, alerts, audit | ✅ | 2026-08-26 | `feat(enterprise)` — multi-tenancy, encrypted secrets, share links, anomaly detection |
 
 ## Key metrics (filled in as they are measured)
 
@@ -1149,3 +1150,121 @@ only one that exists.
 **Screenshots** are listed in the requirement and are not in the repository: they cannot be
 captured from here. The interface runs at `/app/` on the API's own port, so any reader can see the
 live thing rather than an image of it — and `docs/` describes each page in text.
+
+
+### Step 18 — Phase 3: organisations, data sources, sharing, alerts and the audit trail
+
+**Status:** ✅ Done · **Date:** 2026-08-26 · **Commit:** `feat(enterprise)`
+
+The system now serves more than one company. **653 tests pass** across 59 source modules; `ruff`
+and `mypy` clean; the evaluation suite validates (32 questions, every reference query executes and
+passes the guard).
+
+**1 · Multi-tenancy, enforced in the SQL.** Migration 005 adds organisations, users, memberships,
+API keys, data sources, share links, alerts and an audit log — and adds `organization_id` to `runs`
+and `reports`.
+
+The interesting decision was not the column, it was what happens to the rows that already existed.
+They are **backfilled into a default organisation**, `NOT NULL` from the moment the column exists.
+A nullable owner would force every read to decide what an unowned row means, and the first
+careless decision there is a boundary leak. `Principal.in_organization(None)` returns False for the
+same reason, even though the schema should make it unreachable.
+
+The filter lives in `db/tenancy.py` and in the scoped repository reads, **not in the routes**: a
+route can be added next month by somebody who has not read the rule, but a query filtering by
+`organization_id` cannot return another tenant's row whoever calls it. Exactly two functions look
+across organisations — resolving an API key and resolving a share token — and both say so in their
+docstring.
+
+Another organisation's resource answers **404, not 403**. A 403 confirms the resource exists, and a
+sequence of those confirmations is an enumeration of somebody else's work. 403 is reserved for a
+caller who *is* in the right organisation but whose role is too low, where telling them to ask for
+access is useful and reveals nothing.
+
+**2 · Identity without a login.** There is no session layer, and adding one to satisfy the phrase
+"after login" would ship password storage nothing else here needs. Instead a caller presents
+`Authorization: Bearer <key>` and resolves to a `Principal` — organisation, user, role.
+`REQUIRE_AUTHENTICATION=false` (the default, and how the container runs for a demo) makes an
+unkeyed request the default organisation's owner, flagged anonymous so a page cannot mistake a demo
+for a tenant. `true` removes the anonymous path entirely.
+
+A **bad** key is 401 in both modes. Collapsing "wrong key" into "no key" would silently downgrade a
+revoked key into a demo session with owner rights.
+
+**3 · Two techniques for two kinds of secret, deliberately not conflated.** Data source
+configuration is **encrypted** (Fernet) because it must be recovered to open a connection. API keys
+and share tokens are **hashed**, because nothing needs to read them back — and storing them
+recoverably would let an operator with a database dump *act as* a customer, which is a worse risk
+than reading their warehouse host.
+
+`SECRETS_KEY` lives in the environment, never in the database: a key stored beside the ciphertext it
+protects is obfuscation, and one backup dump would contain both halves. Its absence is a **503 at
+write time** — the service works and the deployment is incomplete — because storing a config in the
+clear "for now" is the one thing that endpoint must not do.
+
+Redaction is the other half of the promise, and it is an **allowlist per source type** so a field
+added next year is hidden until somebody classifies it. A withheld key is *named*
+(`{"_withheld": ["password"]}`) rather than starred out: a masked value in a response is still a
+statement about its length. The `summary` column sits beside the ciphertext, so it is checked for
+credentials at write time even though the allowlist makes that unreachable — it is the one place a
+mistake would put a password in a column the API returns. The audit trail records the redacted
+summary for the same reason.
+
+**4 · Sharing as a capability with a lifetime.** A share is a row that can expire and be revoked,
+not a boolean on the report. Expiry is enforced **in the SQL** alongside revocation and the token
+match, because checking it in Python leaves the decision to whichever caller remembers. A
+team-audience link still requires membership — "share with my team" must not quietly mean "share
+with the internet" — and unknown, expired and revoked links are all the same 404, since
+distinguishing them tells the holder of a dead link whether it ever existed.
+
+**5 · Alerts that cannot invent a metric.** An alert watches an approved metric, checked against the
+registry at creation. It runs unattended, so a definition somebody invented once would keep firing
+about a number nobody agreed on. `drop` and `spike` are relative to a baseline — the mean of the
+periods *before* the observed one, because including it dilutes the very change being detected —
+and `below`/`above` are absolute. The schema refuses a one-period window: a value compared to itself
+can never move, which reads as "nothing is wrong".
+
+Every evaluation is recorded, fired or not. Keeping only breaches would leave no way to tell a quiet
+alert from one that stopped running, and "we were never alerted" is the sentence that follows the
+second.
+
+**6 · An append-only audit trail.** The repository exposes `audit` and `audit_entries` and nothing
+else; a test asserts that no update, delete or purge function *exists* rather than merely that a
+statement fails. An audit write never fails the action it describes — a failed insert is logged at
+error level and the invitation still happened. An unauthenticated action is labelled as such.
+
+**Three real bugs the tests caught, all in the boundary:**
+
+* **A saved report landed in the default organisation**, not the caller's — invisible to the person
+  who saved it and visible to a tenant with nothing to do with it. The `save_report` route was
+  never taught about tenancy. This is exactly what the isolation tests are for, and it is why they
+  check from *both* directions rather than only asserting B cannot see A.
+* **An alert evaluation had no run.** It used a throwaway id, and the foreign key on `tool_calls`
+  refused it — correctly: a tool call with no run is a query nobody can trace back to a reason. An
+  evaluation now creates a real run owned by the alert's organisation, closed either way so it does
+  not sit on the dashboard as work in flight.
+* **`require_api_key` collided with an existing method** of the same name on `Settings`, so pydantic
+  tried to validate a bound method as a boolean. Renamed `require_authentication`, which reads
+  better anyway.
+
+And one place where the **constraint was right and the test was wrong**:
+`report_shares_expiry_is_in_the_future` refused a test that back-dated a just-created share's
+expiry. The test now ages the share properly, because an expiry before its own creation is
+nonsense and the schema should keep saying so.
+
+**7 · Documentation.** [docs/security-model.md](docs/security-model.md) is new and is the one to
+read: identity, isolation, the two secret techniques, roles, sharing, the audit trail — and a §9
+that states plainly what this model does *not* do (no login, no warehouse row-level security, data
+sources stored but not yet queried, no key rotation, share links are bearer capabilities, the trail
+is not tamper-evident). [docs/deployment.md](docs/deployment.md) is also new: three modes, and the
+five things that are not optional before serving more than one company.
+
+**What is honestly incomplete.** Data sources are stored, listed and redacted correctly — the agent
+still queries the seeded `analytics` schema. Pointing it at a customer's own warehouse needs a
+per-source guard catalogue and a per-source read-only role, and that is the next real piece of work
+rather than a finishing touch.
+
+**The evaluation suite** validates end to end (`--validate`: 32 questions, every reference query
+executes and passes the guard). A **scored** run against a live model is still outstanding: the Groq
+free tier's per-minute token limit makes a 32-question run a multi-hour exercise, so the numbers in
+§6 of the technical report remain the one thing this project has not measured.

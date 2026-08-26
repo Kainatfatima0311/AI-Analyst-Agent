@@ -69,6 +69,24 @@ reviewer wants to know.
 
 ---
 
+## Organisations, teams and data sources
+
+| | |
+|---|---|
+| **Multi-tenant** | every run, report, data source, alert and audit entry belongs to an organisation, and every tenant-scoped query filters by it **in SQL**. Another organisation's resource answers 404, never 403 — a 403 confirms it exists |
+| **Teams** | invite, promote, remove; four roles on a ladder (`viewer < analyst < admin < owner`). The last owner cannot be removed or demoted, and owner is not invitable |
+| **Identity** | `Authorization: Bearer <key>`. Keys are stored as hashes and shown once. `REQUIRE_AUTHENTICATION=true` removes the anonymous path entirely |
+| **Data sources** | PostgreSQL, CSV, Excel. Configuration is encrypted with a key held outside the database, and the API returns an allowlisted redaction — a withheld field is *named*, not starred out |
+| **Sharing** | private / team / public, with expiry and revocation. A team link still requires membership; unknown, expired and revoked links are the same 404 |
+| **Alerts** | drop, spike, below, above — over an **approved metric**, never free SQL. Every evaluation is recorded, fired or not |
+| **Audit** | append-only: who did what, in which organisation. No update or delete path exists |
+
+Read [docs/security-model.md](docs/security-model.md) for what this does and, more usefully, what
+it does not. [docs/deployment.md](docs/deployment.md) has the five things that are not optional
+before serving more than one company.
+
+---
+
 ## Dashboards, reports and exports
 
 | | |
@@ -139,6 +157,13 @@ the guard and the metrics layer is testable without it.
 | `POST /v1/runs/{id}/answer` | reply to a clarification the agent asked for |
 | `GET /v1/metrics` · `GET /v1/schema` | the approved definitions; what is queryable |
 | `GET /v1/dashboard/summary` | totals, outcome rates, recent questions, most-used definitions, recent findings |
+| `GET /v1/me` · `POST /v1/organizations` | who the caller is; create an organisation |
+| `GET /v1/team` · `POST /v1/team/invite` · `PATCH /v1/team/member/{id}` | the team, and managing it |
+| `GET` · `POST` · `DELETE /v1/team/keys[/{id}]` | issue and revoke API keys |
+| `GET` · `POST` · `DELETE /v1/data-sources[/{id}]` | data sources, credentials never returned |
+| `POST /v1/reports/{id}/shares` · `GET /v1/shared/{token}` | share links, with expiry |
+| `GET` · `POST` · `PATCH` · `DELETE /v1/alerts[/{id}]` · `POST /v1/alerts/{id}/check` | monitoring alerts |
+| `GET /v1/audit` | the append-only audit trail |
 | `POST /v1/reports` · `GET /v1/reports` | save a finished run as a report; list what is saved |
 | `GET` · `PATCH` · `DELETE /v1/reports/{id}` | read, rename, delete |
 | `GET /v1/reports/{id}/export.pdf` · `.xlsx` | the report as a file, evidence included |
