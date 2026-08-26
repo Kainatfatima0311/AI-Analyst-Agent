@@ -44,6 +44,7 @@ from analyst_agent.agent.llm import LLM, Effort, LLMResponse
 from analyst_agent.config import Settings
 from analyst_agent.db import repository as repo
 from analyst_agent.observability.logging import get_logger
+from analyst_agent.tools.base import strict_schema
 
 log = get_logger(__name__)
 
@@ -218,18 +219,26 @@ class GroqLLM(LLM):
         request: dict[str, Any] = {
             "model": self.model,
             "messages": _to_chat_messages(system, messages),
-            "max_completion_tokens": max_tokens or self._settings.max_tokens_nonstreaming,
+            "max_completion_tokens": max_tokens or self._settings.groq_max_tokens,
             "temperature": self._settings.groq_temperature,
         }
         if tools:
             request["tools"] = _to_chat_tools(tools)
             request["tool_choice"] = "auto"
+            # This provider validates tool calls server-side and fails the whole request with a
+            # 400 when the model names a tool outside `tools`. That is the wrong outcome here:
+            # the tool loop is built to answer an out-of-allowlist call with a *refusal in the
+            # tool result*, which the model can read and correct. A 400 kills the run instead.
+            # So validation is delegated back to us, where the allowlist already lives.
+            request["disable_tool_validation"] = True
         if response_model is not None:
             request["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
                     "name": response_model.__name__,
-                    "schema": response_model.model_json_schema(),
+                    # Tightened, because this provider refuses a schema whose objects do not
+                    # forbid unknown properties - the same rule strict tool use imposes.
+                    "schema": strict_schema(response_model),
                     "strict": True,
                 },
             }
@@ -303,6 +312,21 @@ class GroqLLM(LLM):
                     usage=_usage_of(completion),
                 )
             except groq.BadRequestError as exc:
+                if _is_tool_use_failure(exc):
+                    # A malformed tool call that server-side validation caught anyway. Returned
+                    # as a text turn rather than raised, so the loop offers the model another
+                    # attempt instead of ending the investigation on a 400.
+                    log.warning("groq rejected a tool call", error=str(exc)[:300])
+                    return _Turn(
+                        text=(
+                            "The previous tool call was rejected as malformed. Call one of the "
+                            "offered tools again, using exactly the argument names in its "
+                            "schema."
+                        ),
+                        tool_calls=[],
+                        finish_reason="tool_use_failed",
+                        usage=repo.Usage(),
+                    )
                 if (
                     response_model is not None
                     and not downgraded
@@ -336,8 +360,47 @@ class GroqLLM(LLM):
                 )
                 time.sleep(delay)
             except groq.APIStatusError as exc:
+                # A per-minute token allowance can surface as 413 rather than 429, because the
+                # request is rejected for its *size* against the remaining allowance. It is a
+                # wait, not a malformed request, so it is retried like a rate limit - otherwise
+                # a free-tier key fails a run it would have completed a minute later.
+                if _is_rate_limit(exc) and attempt <= max_retries:
+                    delay = _retry_after(exc, attempt)
+                    log.warning(
+                        "groq rate limited; waiting",
+                        attempt=attempt,
+                        delay_seconds=delay,
+                        status=exc.status_code,
+                    )
+                    time.sleep(delay)
+                    continue
                 log.error("groq call failed", status=exc.status_code, error=str(exc))
                 raise
+
+
+def _is_tool_use_failure(exc: groq.BadRequestError) -> bool:
+    """Whether a 400 is the provider refusing a tool call rather than the request."""
+    return "tool_use_failed" in str(exc) or "tool call validation failed" in str(exc).lower()
+
+
+def _is_rate_limit(exc: groq.APIStatusError) -> bool:
+    """Whether a status error is really "wait and try again"."""
+    if exc.status_code == 429:
+        return True
+    return exc.status_code == 413 and "rate_limit" in str(exc).lower()
+
+
+def _retry_after(exc: groq.APIStatusError, attempt: int) -> float:
+    """Honour the server's own wait if it named one.
+
+    Guessing an exponential backoff against a per-minute window either waits far too long or
+    retries far too early; the header knows.
+    """
+    header = (getattr(exc, "response", None) and exc.response.headers.get("retry-after")) or ""
+    try:
+        return min(float(header), 65.0)
+    except ValueError:
+        return float(min(2 ** (attempt - 1), 30))
 
 
 def _loads_arguments(arguments: str | None) -> dict[str, Any]:

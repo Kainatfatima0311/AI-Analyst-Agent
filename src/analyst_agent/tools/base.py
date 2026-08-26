@@ -83,14 +83,24 @@ def anthropic_tool_schema(
     the model must pass the key and may pass null. That is why the input models below use
     ``X | None = None`` rather than leaving fields out.
     """
-    schema = model.model_json_schema()
-    _tighten(schema)
     return {
         "name": name,
         "description": description.strip(),
-        "input_schema": schema,
+        "input_schema": strict_schema(model),
         "strict": True,
     }
+
+
+def strict_schema(model: type[BaseModel]) -> dict[str, Any]:
+    """A pydantic model's JSON Schema, tightened for strict mode.
+
+    Shared with the Groq backend, which enforces the same two rules on a structured-output
+    schema as strict tool use does here - and rejects the whole request rather than relaxing
+    them. One implementation means a schema accepted in one place is accepted in both.
+    """
+    schema = model.model_json_schema()
+    _tighten(schema)
+    return schema
 
 
 def _tighten(node: Any) -> None:

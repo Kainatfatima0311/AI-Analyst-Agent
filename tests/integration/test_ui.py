@@ -150,8 +150,36 @@ METRICS = [
 ]
 
 
+SCHEMA: dict[str, Any] = {
+    "schemas": ["analytics"],
+    "objects": [
+        {
+            "name": "analytics.orders",
+            "columns": [
+                {"name": "order_id", "restricted": False},
+                {"name": "order_status", "restricted": False},
+            ],
+        },
+        {
+            "name": "analytics.customer_contact",
+            "columns": [
+                {"name": "customer_id", "restricted": False},
+                {"name": "email", "restricted": True},
+                {"name": "phone", "restricted": True},
+            ],
+        },
+    ],
+}
+
+
 class StubApi:
-    """Stands in for the HTTP client, so the UI is tested and the stack is not."""
+    """Stands in for the HTTP client, so the UI is tested and the stack is not.
+
+    It mirrors the real client's surface, ``base_url`` included: a stub that is missing an
+    attribute the page reads turns a page bug into a stub bug, and the settings page reads it.
+    """
+
+    base_url = "http://localhost:8000"
 
     def __init__(self, run: dict[str, Any] | None = None) -> None:
         self._run = run or ANSWERED_RUN
@@ -162,6 +190,9 @@ class StubApi:
 
     def metrics(self) -> list[dict[str, Any]]:
         return METRICS
+
+    def schema(self) -> dict[str, Any]:
+        return SCHEMA
 
     def runs(self, limit: int = 20) -> list[dict[str, Any]]:
         return [self._run]
@@ -325,19 +356,44 @@ def test_status_is_never_carried_by_colour_alone() -> None:
         assert status.icon in markup
 
 
-def test_the_ui_accent_comes_from_the_validated_chart_palette() -> None:
-    """A chart and the card around it have to read as one system."""
-    from analyst_agent.tools.palette import LIGHT
+def test_the_chrome_accent_is_not_one_of_the_series_colours() -> None:
+    """Chrome and series do different jobs, so they must not share a hue.
 
-    assert LIGHT.categorical[0] in theme.stylesheet()
+    A reader who has just learnt that a colour means "premium category" should not then meet it
+    on a button. The accent carries *hierarchy* — clickable, current, primary — and the series
+    colours carry *identity*.
+    """
+    from analyst_agent.tools.palette import CATEGORICAL_DARK, CATEGORICAL_LIGHT
+
+    series = {c.lower() for c in (*CATEGORICAL_LIGHT, *CATEGORICAL_DARK)}
+    for chrome_colour in (theme.ACCENT, theme.ACCENT_STRONG):
+        assert chrome_colour.lower() not in series
 
 
-def test_the_stylesheet_defines_a_dark_variant() -> None:
-    css = theme.stylesheet()
-    assert "prefers-color-scheme: dark" in css
-    from analyst_agent.tools.palette import DARK
+def test_each_mode_paints_its_own_surfaces() -> None:
+    """Dark mode is selected, not flipped: the two modes are separate sets of values."""
+    light = theme.stylesheet("light")
+    dark = theme.stylesheet("dark")
+    assert theme.CHROME["light"].surface in light
+    assert theme.CHROME["dark"].surface in dark
+    assert theme.CHROME["dark"].surface not in light
+    # The sidebar is the frame and stays dark in both, so the content surface is what changes.
+    assert theme.SIDEBAR in light
+    assert theme.SIDEBAR in dark
 
-    assert DARK.surface in css
+
+def test_a_chart_is_rethemed_from_the_validated_palette_for_its_mode() -> None:
+    """The surface and ink follow the mode; the series colours never do.
+
+    Repainting series by viewing context would break the rule that colour follows the entity —
+    the same category has to keep the same hue whichever mode a reader is in.
+    """
+    from analyst_agent.tools.palette import DARK, LIGHT
+
+    assert theme.chart_layout("light")["xaxis"]["gridcolor"] == LIGHT.grid
+    assert theme.chart_layout("dark")["xaxis"]["gridcolor"] == DARK.grid
+    # Transparent, so a figure sits in whatever card surface the mode painted.
+    assert theme.chart_layout("dark")["paper_bgcolor"] == "rgba(0,0,0,0)"
 
 
 def test_status_colours_are_not_reused_as_series_colours() -> None:
@@ -352,3 +408,77 @@ def test_status_colours_are_not_reused_as_series_colours() -> None:
 def test_a_chip_renders_label_icon_and_colour() -> None:
     markup = components.st and theme.chip("Blocked", "✕", "#b23c3c")
     assert "Blocked" in markup and "✕" in markup and "#b23c3c" in markup
+
+# --- the redesigned shell ------------------------------------------------------
+
+
+def test_every_page_renders_without_error(app) -> None:
+    """Six pages, all built from what the API returns — none of them may throw on real data."""
+    for page in ("ask", "dashboard", "saved", "metrics", "schema", "settings"):
+        test = app()
+        test.session_state["page"] = page
+        test.run()
+        assert not test.exception, f"page {page} raised"
+
+
+def test_the_landing_page_offers_the_starting_questions(app) -> None:
+    test = app().run()
+    labels = " ".join(b.label for b in test.button)
+    assert "monthly revenue" in labels
+    assert "Why did revenue drop" in labels
+
+
+def test_the_nav_marks_the_current_page_without_offering_it_as_a_control(app) -> None:
+    """Clicking where you already are should not be offered."""
+    test = app().run()
+    assert any("nav-current" in m.value for m in test.markdown)
+    nav_buttons = [b.label for b in test.button if "Ask Question" in b.label]
+    assert not nav_buttons, "the current page is a label, not a button"
+
+
+def test_dark_mode_is_a_real_toggle(app) -> None:
+    test = app()
+    test.session_state["dark"] = True
+    test.run()
+    assert not test.exception
+    css = " ".join(m.value for m in test.markdown)
+    assert theme.CHROME["dark"].surface in css
+
+
+def test_the_metrics_page_shows_every_approved_definition(app) -> None:
+    test = app()
+    test.session_state["page"] = "metrics"
+    test.run()
+    page = " ".join(m.value for m in test.markdown)
+    assert "revenue" in page
+    assert "revenue@v1" in page, "the version is part of the identity of a definition"
+
+
+def test_the_data_explorer_marks_a_restricted_column(app) -> None:
+    """A restricted column is listed, never sampled — so it has to be visibly marked."""
+    test = app()
+    test.session_state["page"] = "schema"
+    test.run()
+    page = " ".join(m.value for m in test.markdown)
+    assert "Restricted columns" in page
+
+
+# --- relative time -------------------------------------------------------------
+
+
+def test_relative_time_reads_the_way_a_person_would_say_it() -> None:
+    import datetime as dt
+
+    now = dt.datetime.now(dt.UTC)
+    assert components.ago((now - dt.timedelta(seconds=20)).isoformat()) == "just now"
+    assert components.ago((now - dt.timedelta(minutes=7)).isoformat()) == "7 minutes ago"
+    assert components.ago((now - dt.timedelta(hours=1)).isoformat()) == "1 hour ago"
+    assert components.ago((now - dt.timedelta(hours=5)).isoformat()) == "5 hours ago"
+    assert components.ago((now - dt.timedelta(days=1)).isoformat()) == "yesterday"
+    assert components.ago((now - dt.timedelta(days=4)).isoformat()) == "4 days ago"
+
+
+def test_an_unparseable_timestamp_still_shows_something() -> None:
+    """A value this cannot parse is more informative than nothing."""
+    assert components.ago("not-a-date-at-all") == "not-a-date-at-al"
+    assert components.ago(None) == ""

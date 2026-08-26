@@ -70,6 +70,13 @@ class NodeContext:
         return budget.to_state()
 
 
+# How much of a result set travels in the context. Small enough that the reasoning still has
+# room, large enough that an ordinary monthly or category breakdown arrives whole.
+RESULT_MAX_ROWS = 40
+RESULT_MAX_COLUMNS = 10
+RESULT_CHAR_BUDGET = 8_000
+
+
 def _history(state: AnalystState, extra: str | None = None) -> list[dict[str, Any]]:
     """The conversation so far, as user-role content.
 
@@ -109,6 +116,10 @@ def _history(state: AnalystState, extra: str | None = None) -> list[dict[str, An
             lines.append(f"- {query['query_id']} [{status}] {query['purpose']} -> {detail}")
         parts.append("Queries run so far:\n" + "\n".join(lines))
 
+    tables = _result_tables(state)
+    if tables:
+        parts.append(tables)
+
     findings = state.get("findings", [])
     if findings:
         parts.append(
@@ -123,6 +134,93 @@ def _history(state: AnalystState, extra: str | None = None) -> list[dict[str, An
         parts.append(extra)
 
     return [{"role": "user", "content": "\n\n".join(parts)}]
+
+
+def _result_tables(state: AnalystState) -> str:
+    """The actual values every executed query returned.
+
+    Without this, a node downstream of ``interpret`` knows only that a query returned twelve
+    rows, not what was in them - and a model asked to write a conclusion from that reconstructs
+    the figures from its own earlier prose. Observed on a real run: two of twelve monthly
+    revenue figures came back exact and the other ten were plausible interpolations between
+    them. That is the precise failure this project exists to prevent, and no amount of prompting
+    fixes it, because the numbers were genuinely not in the context.
+
+    Bounded on three axes - rows per table, columns per table, and total characters - because a
+    five-thousand-row result would otherwise crowd out the reasoning it is meant to support.
+    Every cut is stated in the text: a silently truncated table invites the model to invent the
+    remainder, which is the same bug in a smaller costume.
+    """
+    from analyst_agent.tools.frames import get_store
+
+    executed = executed_query_ids(state)
+    if not executed:
+        return ""
+
+    store = get_store()
+    blocks: list[str] = []
+    budget = RESULT_CHAR_BUDGET
+
+    for query_id in executed:
+        if budget <= 0:
+            blocks.append("(earlier results omitted - re-run a query if you need its values)")
+            break
+        try:
+            frame = store.get(uuid.UUID(query_id))
+        except (KeyError, ValueError):
+            # The frame is gone and could not be rebuilt from the audit trail. Saying so beats
+            # omitting the query, which would read as "this one returned nothing".
+            blocks.append(f"{query_id}: values no longer available")
+            continue
+
+        rendered, notes = _render_frame(frame)
+        block = f"{query_id}:\n{rendered}"
+        if notes:
+            block += "\n(" + "; ".join(notes) + ")"
+        budget -= len(block)
+        blocks.append(block)
+
+    if not blocks:
+        return ""
+    return (
+        "Values returned, by query id. These are the data - quote figures from here exactly, "
+        "and do not state a number that is not in one of these tables:\n\n"
+        + "\n\n".join(blocks)
+    )
+
+
+def _render_frame(frame: Any) -> tuple[str, list[str]]:
+    """One result as a compact table, plus a note of whatever was left out."""
+    notes: list[str] = []
+    columns = list(frame.columns)
+    if len(columns) > RESULT_MAX_COLUMNS:
+        notes.append(f"showing {RESULT_MAX_COLUMNS} of {len(columns)} columns")
+        columns = columns[:RESULT_MAX_COLUMNS]
+
+    shown = frame[columns].head(RESULT_MAX_ROWS)
+    if len(frame) > RESULT_MAX_ROWS:
+        notes.append(
+            f"first {RESULT_MAX_ROWS} of {len(frame)} rows - do not report figures for the rest"
+        )
+
+    header = " | ".join(str(column) for column in columns)
+    lines = [header, "-" * len(header)]
+    for record in shown.to_dict(orient="records"):
+        lines.append(" | ".join(_cell(record[column]) for column in columns))
+    return "\n".join(lines), notes
+
+
+def _cell(value: Any) -> str:
+    """One value, readable and unrounded.
+
+    Rounding here would be a silent edit to the evidence: a figure the answer then cites as
+    exact would differ from what the warehouse holds.
+    """
+    if value is None:
+        return "NULL"
+    if isinstance(value, float):
+        return f"{value:.2f}" if value == value else "NULL"
+    return str(value)
 
 
 # --- nodes ------------------------------------------------------------------

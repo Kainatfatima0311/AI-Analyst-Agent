@@ -50,7 +50,16 @@ class Settings(BaseSettings):
     # --- Groq (OpenAI-compatible chat completions) --------------------------
     groq_api_key: SecretStr | None = None
     groq_model: str = "openai/gpt-oss-120b"
-    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_base_url: str = "https://api.groq.com"
+    """Host only. The SDK appends /openai/v1 itself — including it here double-prefixes."""
+    groq_max_tokens: int = 4_096
+    """Output cap for this provider, well below the Anthropic one.
+
+    Groq counts ``max_completion_tokens`` against the per-minute token allowance *before*
+    generating, so a 16k request is refused outright on a free tier with an 8k limit even when
+    the answer would have been three lines.
+    """
+
     groq_temperature: float = 0.2
     """Low, not zero: SQL authoring wants determinism, hypothesis generation wants variety."""
 

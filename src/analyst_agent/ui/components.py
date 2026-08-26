@@ -1,26 +1,110 @@
 """Rendering pieces for the analyst interface.
 
-Each function renders one thing and returns nothing, so the app file reads as a layout rather
-than as a wall of markup. The one rule they all share: **no claim appears without a way to get to
-the query behind it.**
+Each function renders one thing and returns nothing (or a decision), so the app file reads as a
+layout rather than as a wall of markup. The one rule they all share: **no claim appears without a
+way to get to the query behind it.**
+
+Nothing here invents data to fill a panel. If a run produced no chart, the chart panel says so
+rather than drawing something plausible — a dashboard that always looks complete is a dashboard
+you cannot trust when it is.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
 import plotly.graph_objects as go
 import streamlit as st
 
-from analyst_agent.ui.theme import chip, confidence_chip, status_chip, status_of
+from analyst_agent.ui.theme import (
+    Mode,
+    chart_layout,
+    chip,
+    confidence_chip,
+    status_chip,
+    status_of,
+)
+
+NAV: list[tuple[str, str, str]] = [
+    ("ask", "⌂", "Ask Question"),
+    ("dashboard", "▤", "Dashboard"),
+    ("saved", "❏", "Saved Analyses"),
+    ("metrics", "◈", "Metrics Catalog"),
+    ("schema", "⌕", "Data Explorer"),
+    ("settings", "⚙", "Settings"),
+]
 
 
-def masthead() -> None:
+# --- sidebar ------------------------------------------------------------------
+
+
+def brand() -> None:
     st.markdown(
-        '<div class="masthead">'
-        '<span class="title">Analyst</span>'
-        '<span class="tagline">every number leads back to the query behind it</span>'
+        '<div class="brand">'
+        '<div class="mark">◆</div>'
+        '<div><div class="name">Analyst</div>'
+        '<div class="kind">AI Data Analyst</div></div>'
         "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def nav(current: str) -> str:
+    """The nav list. Returns the page to show.
+
+    The current row is a styled div and the rest are buttons wearing the same shape, so the only
+    visual difference between them is *state* rather than kind — and the current row is not a
+    control, because clicking where you already are should not be offered.
+    """
+    chosen = current
+    for key, icon, label in NAV:
+        if key == current:
+            st.markdown(
+                f'<div class="nav-current"><span class="ico">{icon}</span>{label}</div>',
+                unsafe_allow_html=True,
+            )
+        elif st.button(f"{icon}   {label}", key=f"nav-{key}", use_container_width=True):
+            chosen = key
+    return chosen
+
+
+def side_status(reachable: bool) -> None:
+    tone = "#1f7a4d" if reachable else "#b23c3c"
+    label = "API Reachable" if reachable else "API Unreachable"
+    sub = "All systems operational" if reachable else "Start it with `make api`"
+    st.markdown(
+        f'<div class="side-status"><div class="row">'
+        f'<span class="dot" style="background:{tone}"></span>'
+        f'<span style="color:{tone}">{label}</span></div>'
+        f'<div class="sub">{sub}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def side_user(who: str) -> None:
+    initial = (who or "?").strip()[:1].upper()
+    st.markdown(
+        f'<div class="side-user"><div class="avatar">{initial}</div>'
+        f'<div><div class="who">{who}</div><div class="role">Analyst</div></div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+# --- page furniture -----------------------------------------------------------
+
+
+def page_header(title: str, subtitle: str) -> None:
+    st.markdown(
+        f'<div class="greeting">{title}</div>'
+        f'<div class="greeting-sub">{subtitle}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def section(heading: str) -> None:
+    st.markdown(
+        f'<div class="section-head"><div class="h">{heading}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -31,15 +115,176 @@ def stat_row(stats: list[tuple[str, Any]]) -> None:
         f'<div class="label">{label}</div></div>'
         for label, value in stats
     )
-    st.markdown(f'<div class="card flush"><div class="stat-row">{cells}</div></div>',
-                unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="card flush"><div class="stat-row">{cells}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def ask_head() -> None:
+    st.markdown(
+        '<div class="ask-head"><span class="spark">✦</span>'
+        '<span class="t">Ask anything about your business</span></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def char_counter(used: int, limit: int) -> None:
+    st.markdown(
+        f'<div class="counter">{used} / {limit}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def suggestion(question: str, glyph: str) -> None:
+    st.markdown(
+        f'<div class="suggest">'
+        f'<div class="ico" style="background:var(--accent-soft);color:var(--accent)">{glyph}</div>'
+        f'<div class="q">{question}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def recent_card(run: dict[str, Any], current: bool) -> None:
+    question = run["question"]
+    question = question if len(question) <= 62 else question[:61] + "…"
+    st.markdown(
+        f'<div class="recent{" current" if current else ""}">'
+        f'<div class="q">{question}</div>'
+        f'<div class="meta"><span class="when">{ago(run.get("created_at"))}</span>'
+        f'{status_chip(run.get("status"))}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def ago(timestamp: str | None) -> str:
+    """How long ago, in the units a person would use.
+
+    Falls back to the raw value rather than to "unknown": a timestamp this cannot parse is still
+    more informative than nothing.
+    """
+    if not timestamp:
+        return ""
+    try:
+        when = dt.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return timestamp[:16]
+    seconds = (dt.datetime.now(dt.UTC) - when).total_seconds()
+    if seconds < 90:
+        return "just now"
+    if seconds < 3600:
+        return f"{int(seconds // 60)} minutes ago"
+    if seconds < 86400:
+        hours = int(seconds // 3600)
+        return f"{hours} hour{'s' if hours > 1 else ''} ago"
+    days = int(seconds // 86400)
+    return "yesterday" if days == 1 else f"{days} days ago"
+
+
+# --- the result ---------------------------------------------------------------
+
+
+def result_head(run: dict[str, Any]) -> None:
+    st.markdown(
+        f'<div class="result-head"><div>'
+        f'<div class="q">{run["question"]}</div>'
+        f'<div class="chip-row">{status_chip(run["status"])}'
+        f'<span class="chip" style="color:var(--text-muted);border-color:var(--border-strong)">'
+        f'{ago(run.get("created_at"))}</span></div>'
+        f"</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def takeaways(run: dict[str, Any]) -> None:
+    """The findings, as the panel a reader looks at first.
+
+    Only what the agent actually recorded. A material finding is marked as needing an
+    explanation, because that is the state the investigation loop cares about.
+    """
+    st.markdown('<div class="panel-title">Key Takeaways</div>', unsafe_allow_html=True)
+    findings_list = run.get("findings") or []
+    if not findings_list:
+        st.markdown(
+            '<div class="takeaway"><span class="ico">·</span>'
+            '<span class="t">No separate findings were recorded for this question.</span>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    for finding in findings_list[:5]:
+        material = finding.get("material")
+        tested = [
+            h for h in finding.get("hypotheses", [])
+            if h.get("status") in ("supported", "refuted")
+        ]
+        # An icon plus a border tone, never colour alone: a material finding has to be legible in
+        # a screenshot and to a reader who cannot separate the hues.
+        klass, icon = ("material", "!") if material else ("good", "✓")
+        note = ""
+        if material:
+            note = (
+                f' <span style="color:var(--text-muted)">· {len(tested)} '
+                f'explanation{"s" if len(tested) != 1 else ""} tested</span>'
+            )
+        st.markdown(
+            f'<div class="takeaway {klass}"><span class="ico">{icon}</span>'
+            f'<span class="t">{finding["statement"]}{note}</span></div>',
+            unsafe_allow_html=True,
+        )
+
+
+def chart_panel(
+    charts_data: list[dict[str, Any]], index: int, title: str, mode: Mode = "light"
+) -> None:
+    """One of the agent's figures, or an honest blank.
+
+    The series colours in the spec are left exactly as ``chart_builder`` chose them — only the
+    surface and the ink are re-themed. Repainting series by UI mode would break the rule that
+    colour follows the entity rather than the context it is viewed in.
+    """
+    st.markdown(f'<div class="panel-title">{title}</div>', unsafe_allow_html=True)
+    if index >= len(charts_data):
+        st.markdown(
+            '<div class="takeaway"><span class="ico">·</span><span class="t">'
+            "No chart for this answer — the agent judged a figure would not add to the numbers. "
+            "The values are in the evidence below.</span></div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    chart = charts_data[index]
+    figure = go.Figure(chart["spec"])
+    figure.update_layout(**chart_layout(mode), height=290, showlegend=len(figure.data) > 1)
+    st.plotly_chart(figure, use_container_width=True, key=f"chart-{chart.get('chart_id', index)}")
+    st.markdown(
+        f'<div class="evidence"><div class="meta">from query {chart["query_id"]}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def evidence_footer(run: dict[str, Any], trace: dict[str, Any]) -> None:
+    executed = trace.get("summary", {}).get("queries_executed", 0)
+    blocked = trace.get("summary", {}).get("queries_rejected", 0)
+    label = f"{executed} quer{'y' if executed == 1 else 'ies'} executed"
+    if blocked:
+        label += f" · {blocked} blocked by the guard"
+    st.markdown(
+        f'<div class="evidence-foot"><span class="l">Evidence &amp; Queries</span>'
+        f'<span class="n">{label}</span></div>',
+        unsafe_allow_html=True,
+    )
+
+
+# --- the answer, in full ------------------------------------------------------
 
 
 def conclusion(answer: dict[str, Any]) -> None:
     """The answer, with its confidence and what it ruled out.
 
-    Refuted explanations are shown next to the conclusion rather than tucked below the fold:
-    naming what was disproved is how a reader knows the agent looked.
+    Refuted explanations sit beside the conclusion rather than below the fold: naming what was
+    disproved is how a reader knows the agent looked.
     """
     st.markdown(
         f'<div class="conclusion"><div class="text">{answer["conclusion"]}</div></div>',
@@ -69,7 +314,8 @@ def evidence_drawer(answer: dict[str, Any]) -> None:
         st.caption("No queries were cited — nothing ran that this answer rests on.")
         return
 
-    with st.expander(f"Show the evidence · {len(evidence)} quer" + ("y" if len(evidence) == 1 else "ies")):
+    plural = "y" if len(evidence) == 1 else "ies"
+    with st.expander(f"View SQL & Data · {len(evidence)} quer{plural}"):
         for item in evidence:
             rows = item.get("row_count")
             st.markdown(
@@ -116,13 +362,16 @@ def findings(items: list[dict[str, Any]]) -> None:
         st.markdown("</div>", unsafe_allow_html=True)
 
 
-def charts(items: list[dict[str, Any]]) -> None:
+def charts(items: list[dict[str, Any]], mode: Mode = "light") -> None:
     if not items:
         return
     st.markdown("## Charts")
-    for chart in items:
+    for index, chart in enumerate(items):
         figure = go.Figure(chart["spec"])
-        st.plotly_chart(figure, use_container_width=True)
+        figure.update_layout(**chart_layout(mode))
+        st.plotly_chart(
+            figure, use_container_width=True, key=f"full-chart-{chart.get('chart_id', index)}"
+        )
         st.caption(f"From query {chart['query_id']}")
 
 
@@ -134,8 +383,10 @@ def timeline(steps: list[dict[str, Any]]) -> None:
 
     rows = []
     for step in steps:
-        state = "error" if step["status"] == "error" else (
-            "active" if step["status"] in ("started", "paused") else ""
+        state = (
+            "error"
+            if step["status"] == "error"
+            else ("active" if step["status"] in ("started", "paused") else "")
         )
         duration = f" · {step['duration_ms']} ms" if step.get("duration_ms") else ""
         effort = f" · {step['effort']}" if step.get("effort") else ""
@@ -199,8 +450,7 @@ def approval_banner(run_id: str, approvals: list[dict[str, Any]], api: Any, who:
         payload = approval.get("payload", {})
         st.markdown(
             f'<div class="approval">'
-            f'<div class="kind">{status_of(approval["kind"]).label if approval["kind"] in ("expensive_query",) else approval["kind"].replace("_", " ").title()}'
-            f"</div>"
+            f'<div class="kind">{approval["kind"].replace("_", " ").title()}</div>'
             f'<div class="why">{approval["reason"]}</div>'
             "</div>",
             unsafe_allow_html=True,

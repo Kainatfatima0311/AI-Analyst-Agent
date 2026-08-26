@@ -489,3 +489,141 @@ def test_the_provider_switch_selects_the_backend() -> None:
     assert settings.require_provider_key() == "test-key"
     # get_llm caches, so the reset hook is what makes a provider switch testable at all.
     assert callable(llm_module.reset_llm)
+
+# --- provider-specific tool handling -------------------------------------------
+
+
+def test_tool_validation_is_delegated_back_to_the_allowlist() -> None:
+    """The loop's own refusal is recoverable; a 400 from the provider is not.
+
+    Groq validates tool calls against ``tools`` server-side and fails the whole request when the
+    model names something else. The tool loop is built to answer exactly that with a refusal in
+    the tool result, which the model reads and corrects — so validation is switched off here and
+    the allowlist stays the single authority.
+    """
+    llm, client = _llm([_text("hi")])
+    llm.complete(
+        system="s",
+        messages=[{"role": "user", "content": "q"}],
+        tools=[{"name": "metric_lookup", "description": "d", "input_schema": {}}],
+    )
+    request = client.completions.requests[0]
+    assert request["disable_tool_validation"] is True
+    assert request["tool_choice"] == "auto"
+
+
+def test_no_tool_settings_leak_into_a_toolless_turn() -> None:
+    llm, client = _llm([_text("hi")])
+    llm.complete(system="s", messages=[{"role": "user", "content": "q"}])
+    request = client.completions.requests[0]
+    assert "tools" not in request
+    assert "disable_tool_validation" not in request
+
+
+def test_a_rejected_tool_call_becomes_a_turn_the_loop_can_continue_from() -> None:
+    """A malformed call must not end the investigation on a 400."""
+    llm, _ = _llm([_bad_request("Tool call validation failed: code tool_use_failed")])
+    response = llm.complete(
+        system="s",
+        messages=[{"role": "user", "content": "q"}],
+        tools=[{"name": "metric_query", "description": "d", "input_schema": {}}],
+    )
+    assert response.tool_calls == []
+    assert response.stop_reason == "tool_use_failed"
+    assert "argument names" in response.text
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("code tool_use_failed", True),
+        ("Tool call validation failed: no such tool", True),
+        ("messages: field required", False),
+    ],
+)
+def test_tool_use_failure_detection(message: str, expected: bool) -> None:
+    from analyst_agent.agent.llm_groq import _is_tool_use_failure
+
+    assert _is_tool_use_failure(_bad_request(message)) is expected
+
+
+# --- rate limits ---------------------------------------------------------------
+
+
+def _status_error(status: int, message: str, retry_after: str | None = None) -> groq.APIStatusError:
+    class _Response:
+        status_code = status
+
+        def __init__(self) -> None:
+            self.headers = {"retry-after": retry_after} if retry_after else {}
+
+        request = None
+
+    return groq.APIStatusError(message, response=_Response(), body=None)  # type: ignore[arg-type]
+
+
+def test_a_413_about_the_token_allowance_is_treated_as_a_wait_not_a_bad_request() -> None:
+    """Groq refuses an oversized request against the remaining per-minute allowance with a 413.
+
+    It is a wait, not a malformed request: retrying it a minute later succeeds, so failing the
+    run immediately would throw away work a free-tier key could have completed.
+    """
+    from analyst_agent.agent.llm_groq import _is_rate_limit
+
+    assert _is_rate_limit(_status_error(413, "rate_limit_exceeded: tokens per minute")) is True
+    assert _is_rate_limit(_status_error(429, "too many requests")) is True
+    assert _is_rate_limit(_status_error(413, "payload too large")) is False
+    assert _is_rate_limit(_status_error(500, "server error")) is False
+
+
+def test_the_servers_own_retry_after_is_honoured_over_a_guessed_backoff() -> None:
+    """Guessing against a per-minute window either waits far too long or retries too early."""
+    from analyst_agent.agent.llm_groq import _retry_after
+
+    assert _retry_after(_status_error(429, "wait", retry_after="7.5"), attempt=1) == 7.5
+    # Capped, so a hostile or absurd header cannot park a run indefinitely.
+    assert _retry_after(_status_error(429, "wait", retry_after="9999"), attempt=1) == 65.0
+    # No header, and a non-numeric one, both fall back to exponential backoff.
+    assert _retry_after(_status_error(429, "wait"), attempt=3) == 4.0
+    assert _retry_after(_status_error(429, "wait", retry_after="soon"), attempt=1) == 1.0
+
+
+def test_a_rate_limited_call_is_retried_and_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    slept: list[float] = []
+    monkeypatch.setattr("analyst_agent.agent.llm_groq.time.sleep", slept.append)
+    llm, client = _llm(
+        [_status_error(429, "rate limit reached", retry_after="2"), _text("finally")]
+    )
+    response = llm.complete(system="s", messages=[{"role": "user", "content": "q"}])
+    assert response.text == "finally"
+    assert slept == [2.0]
+    assert len(client.completions.requests) == 2
+
+
+def test_rate_limiting_still_gives_up_eventually(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A retry loop with no ceiling is how a run spends its wall clock on nothing."""
+    monkeypatch.setattr("analyst_agent.agent.llm_groq.time.sleep", lambda _: None)
+    llm, _ = _llm([_status_error(429, "rate limit reached") for _ in range(5)])
+    with pytest.raises(groq.APIStatusError):
+        llm.complete(system="s", messages=[{"role": "user", "content": "q"}], max_retries=2)
+
+
+def test_the_output_cap_is_the_groq_one_not_the_anthropic_one() -> None:
+    """max_completion_tokens counts against the allowance before a single token is generated."""
+    llm, client = _llm([_text("hi")], groq_max_tokens=1_024)
+    llm.complete(system="s", messages=[{"role": "user", "content": "q"}])
+    assert client.completions.requests[0]["max_completion_tokens"] == 1_024
+
+
+def test_the_base_url_is_the_host_only() -> None:
+    """The SDK appends /openai/v1 itself; including it here produces a 404."""
+    assert _settings().groq_base_url == "https://api.groq.com"
+
+
+def test_a_structured_schema_forbids_unknown_properties() -> None:
+    """This provider rejects a schema whose objects do not, so the tightening is not optional."""
+    llm, client = _llm([_text('{"answerable": true, "reason": "r"}')])
+    llm.structured(system="s", messages=[{"role": "user", "content": "q"}], response_model=Decision)
+    schema = client.completions.requests[0]["response_format"]["json_schema"]["schema"]
+    assert schema["additionalProperties"] is False
+    assert sorted(schema["required"]) == ["answerable", "reason"]
