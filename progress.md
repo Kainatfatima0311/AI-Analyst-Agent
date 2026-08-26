@@ -1,54 +1,54 @@
-﻿# Progress Log
+# Progress Log
 
 Updated after **every** step, inside that step's own commit. Plan: [plan.md](plan.md).
 
-Legend: â¬œ Pending Â· ðŸŸ¨ In progress Â· âœ… Done Â· âš ï¸ Done with known issue
+Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known issue
 
 ## Status board
 
 | Step | Title | Status | Date | Commit / Tag |
 |---:|---|:---:|---|---|
-| 0 | Repo skeleton, `plan.md`, `progress.md` | âœ… | 2026-08-24 | `chore(init)` |
-| 1 | Design document | âœ… | 2026-08-24 | `docs(design)` / `v0.1-design` |
-| 2 | Postgres in Docker, read-only role, seeded dataset | âœ… | 2026-08-24 | `feat(db)` |
-| 3 | Config, structured logging, run/trace/audit persistence | âœ… | 2026-08-24 | `feat(core)` |
-| 4 | `sql_guard` â€” SQL safety layer | âœ… | 2026-08-24 | `feat(sql-guard)` / `v0.2-sql-safety` |
-| 5 | Metrics layer (approved KPI definitions) | âœ… | 2026-08-25 | `feat(metrics)` |
-| 6 | The five tools | âœ… | 2026-08-25 | `feat(tools)` |
-| 7 | LangGraph state, checkpointer, LLM wrapper | âœ… | 2026-08-26 | `feat(agent)` / `v0.3-agent-walking-skeleton` |
-| 8 | Multi-hypothesis investigation loop | âœ… | 2026-08-26 | `feat(agent)` / `v0.4-investigation` |
-| 9 | FastAPI business question API | ðŸŸ¨ | â€” | â€” |
-| 10 | Human approval gates and recovery | â¬œ | â€” | â€” |
-| 11 | Streamlit analyst interface | â¬œ | â€” | â€” |
-| 12 | Evaluation suite (â‰¥30 questions) | â¬œ | â€” | â€” |
-| 13 | Dockerized stack, CI, README | â¬œ | â€” | â€” |
-| 14 | Final technical report | â¬œ | â€” | â€” |
+| 0 | Repo skeleton, `plan.md`, `progress.md` | ✅ | 2026-08-24 | `chore(init)` |
+| 1 | Design document | ✅ | 2026-08-24 | `docs(design)` / `v0.1-design` |
+| 2 | Postgres in Docker, read-only role, seeded dataset | ✅ | 2026-08-24 | `feat(db)` |
+| 3 | Config, structured logging, run/trace/audit persistence | ✅ | 2026-08-24 | `feat(core)` |
+| 4 | `sql_guard` — SQL safety layer | ✅ | 2026-08-24 | `feat(sql-guard)` / `v0.2-sql-safety` |
+| 5 | Metrics layer (approved KPI definitions) | ✅ | 2026-08-25 | `feat(metrics)` |
+| 6 | The five tools | ✅ | 2026-08-25 | `feat(tools)` |
+| 7 | LangGraph state, checkpointer, LLM wrapper | ✅ | 2026-08-26 | `feat(agent)` / `v0.3-agent-walking-skeleton` |
+| 8 | Multi-hypothesis investigation loop | ✅ | 2026-08-26 | `feat(agent)` / `v0.4-investigation` |
+| 9 | FastAPI business question API | ✅ | 2026-08-26 | `feat(api)` |
+| 10 | Human approval gates and recovery | ✅ | 2026-08-26 | `feat(approvals)` / `v0.5-approvals` |
+| 11 | Streamlit analyst interface | ✅ | 2026-08-26 | `feat(ui)` |
+| 12 | Evaluation suite (≥30 questions) | ⚠️ | 2026-08-26 | `test(evals)` — built; scores need an API key |
+| 13 | Dockerized stack, CI, README | ✅ | 2026-08-26 | `build(ci)` / `v0.7-deployable` |
+| 14 | Final technical report | ✅ | 2026-08-26 | `docs(report)` / `v1.0` |
 
 ## Key metrics (filled in as they are measured)
 
 | Metric | Target | Current | Measured at |
 |---|---|---|---|
-| Calculation accuracy (factual questions) | â‰¥ 90% | â€” | â€” |
-| SQL safety violations | 0 | 0 | Step 2 â€” 29/29 read-only assertions pass |
-| Diagnostic questions with â‰¥2 tested hypotheses | 100% | â€” | â€” |
-| Ambiguous questions correctly deferred to a human | â‰¥ 90% | â€” | â€” |
-| Unit + integration test coverage | â‰¥ 80% | â€” | â€” |
+| Calculation accuracy (factual questions) | ≥ 90% | — | — |
+| SQL safety violations | 0 | 0 | Step 2 — 29/29 read-only assertions pass |
+| Diagnostic questions with ≥2 tested hypotheses | 100% | — | — |
+| Ambiguous questions correctly deferred to a human | ≥ 90% | — | — |
+| Unit + integration test coverage | ≥ 80% | — | — |
 | Hostile queries rejected | 100% | 79/79 | Step 4 |
-| Material findings reaching an answer untested | 0 | 0 | Step 8 â€” enforced by a graph edge |
+| Material findings reaching an answer untested | 0 | 0 | Step 8 — enforced by a graph edge |
 
 ---
 
 ## Step log
 
-### Step 0 â€” Repo skeleton, `plan.md`, `progress.md`
+### Step 0 — Repo skeleton, `plan.md`, `progress.md`
 
-**Status:** âœ… Done Â· **Date:** 2026-08-24
+**Status:** ✅ Done · **Date:** 2026-08-24
 
 **Built**
 - `.gitignore`, `.env.example`, `pyproject.toml` (runtime + dev dependencies, ruff / mypy /
   pytest configuration), `Makefile`, `README.md` stub.
-- `plan.md` â€” the full fifteen-step plan that all later work executes against.
-- `progress.md` â€” this file, with every step listed.
+- `plan.md` — the full fifteen-step plan that all later work executes against.
+- `progress.md` — this file, with every step listed.
 - Empty directory skeleton so the structure is visible from the first commit.
 
 **Decisions recorded**
@@ -63,43 +63,43 @@ Legend: â¬œ Pending Â· ðŸŸ¨ In progress Â· âœ… Done Â· âš ï
   agent-generated query.
 
 **Verification**
-- `pip install -e ".[dev]"` in a fresh `.venv` â€” âœ… exit 0. Resolved versions: anthropic 1.0.0,
+- `pip install -e ".[dev]"` in a fresh `.venv` — ✅ exit 0. Resolved versions: anthropic 1.0.0,
   langgraph 1.2.11, langgraph-checkpoint-postgres 3.1.2, sqlglot 30.17.0, fastapi 0.141.1,
   pandas 3.0.5, streamlit 1.62.0, psycopg 3.3.4, structlog 26.1.0.
-- `ruff check .` â€” âœ… All checks passed.
+- `ruff check .` — ✅ All checks passed.
 - Dependency floors in `pyproject.toml` were then raised to match the installed majors
   (`anthropic>=1.0`, `langgraph>=1.2`, `langgraph-checkpoint-postgres>=3.1`, `sqlglot>=30.0`,
   `plotly>=6.0`, `kaleido>=1.0`) so CI resolves the same major versions we develop against.
   `pandas` and `numpy` are additionally capped below the next major.
 
 **Notes / open items**
-- `ANTHROPIC_API_KEY` is only required from Step 7 onward; Steps 0â€“6 are testable without it.
+- `ANTHROPIC_API_KEY` is only required from Step 7 onward; Steps 0–6 are testable without it.
 
-### Step 1 â€” Design document
+### Step 1 — Design document
 
-**Status:** âœ… Done Â· **Date:** 2026-08-24 Â· **Tag:** `v0.1-design`
+**Status:** ✅ Done · **Date:** 2026-08-24 · **Tag:** `v0.1-design`
 
 **Built**
-- `docs/design-document.md` â€” agent goal and success criteria, explicit non-goals, system
+- `docs/design-document.md` — agent goal and success criteria, explicit non-goals, system
   architecture and the rationale for LangGraph plus the Anthropic SDK directly, contracts for all
   five tools, the `AnalystState` schema with its two asserted invariants, the control-flow graph
   with the five policy rules encoded as edges rather than prompt text, per-node effort tiers, the
   four approval points, a failure-handling table, nine security limits, observability, persistence
   and recovery, the evaluation approach, and risks accepted at design time.
-- `docs/architecture.md` â€” component map with its boundary rules, the runtime flow of a single
+- `docs/architecture.md` — component map with its boundary rules, the runtime flow of a single
   question, the data model for both the analytical schema and the agent-state schema, the Docker
   deployment topology, and a technology-decision table with the alternatives considered.
-- `docs/security-controls.md` â€” the four enforcement layers, ten controls each mapped to the threat
+- `docs/security-controls.md` — the four enforcement layers, ten controls each mapped to the threat
   it answers plus how it is tested and what remains residual, a threat-to-control matrix, and an
   explicit out-of-scope list.
 - Appendix A of the design document maps all nine common standards to the section or step that
   satisfies each one.
 
 **Verification**
-- All nine common standards map to a named section or a numbered step â€” âœ… (Appendix A).
-- Every tool named in Â§3 has a stated input, output, authority and failure behaviour â€” âœ… (5 of 5).
-- Every security limit in Â§8 has a corresponding control with a test in `security-controls.md` â€”
-  âœ… (C1â€“C10).
+- All nine common standards map to a named section or a numbered step — ✅ (Appendix A).
+- Every tool named in §3 has a stated input, output, authority and failure behaviour — ✅ (5 of 5).
+- Every security limit in §8 has a corresponding control with a test in `security-controls.md` —
+  ✅ (C1–C10).
 
 **Design notes worth flagging**
 - `python_analysis` deliberately exposes a **fixed enumerated operation set** rather than executing
@@ -112,9 +112,9 @@ Legend: â¬œ Pending Â· ðŸŸ¨ In progress Â· âœ… Done Â· âš ï
   live threat rather than a hypothetical one. Control C6 addresses it, and the adversarial
   evaluation category will exercise it.
 
-### Step 2 â€” Postgres in Docker, read-only role, seeded dataset
+### Step 2 — Postgres in Docker, read-only role, seeded dataset
 
-**Status:** âœ… Done Â· **Date:** 2026-08-24
+**Status:** ✅ Done · **Date:** 2026-08-24
 
 **Built**
 - `docker-compose.yml` with the `db` service (postgres:17), a named volume, a `pg_isready`
@@ -126,26 +126,26 @@ Legend: â¬œ Pending Â· ðŸŸ¨ In progress Â· âœ… Done Â· âš ï
   so real Kaggle CSVs load untransformed), plus `dim_date`, an `analytics.customer_contact`
   table giving the sensitive-column policy a real surface, and the `v_order_revenue` view that
   pre-aggregates items to order grain. Schema `agent` created empty for Step 3.
-- `db/seed/download.py` â€” three sources tried in order: local CSVs, Kaggle (via
+- `db/seed/download.py` — three sources tried in order: local CSVs, Kaggle (via
   `KAGGLE_USERNAME`/`KAGGLE_KEY`, no extra dependency), then the synthetic generator.
-- `db/seed/generate.py` â€” a deterministic Olist-shaped generator with **planted ground truth**.
-- `db/seed/load.py` â€” staging-table loader with `ON CONFLICT DO NOTHING` and foreign-key filters.
+- `db/seed/generate.py` — a deterministic Olist-shaped generator with **planted ground truth**.
+- `db/seed/load.py` — staging-table loader with `ON CONFLICT DO NOTHING` and foreign-key filters.
 - `scripts/seed_db.py`, `scripts/smoke.py`, `tests/conftest.py`,
   `tests/integration/test_readonly_role.py`, `db/seed/README.md`.
 
 **Verification**
-- `docker compose up -d db` â€” healthy in 5s; the bootstrap applied all three SQL files with no
+- `docker compose up -d db` — healthy in 5s; the bootstrap applied all three SQL files with no
   errors.
-- `python scripts/seed_db.py --source local` â€” âœ… 36,198 orders Â· 50,622 order items Â· 38,356
-  payments Â· 24,583 reviews Â· 36,198 customers Â· 2,400 products Â· 600 sellers Â· 730 dim_date
+- `python scripts/seed_db.py --source local` — ✅ 36,198 orders · 50,622 order items · 38,356
+  payments · 24,583 reviews · 36,198 customers · 2,400 products · 600 sellers · 730 dim_date
   rows, period 2016-09 .. 2018-08, zero orphan rows, view returns 36,198 rows.
-- `python scripts/smoke.py` â€” âœ… **29 passed, 0 failed.** INSERT/UPDATE/DELETE/TRUNCATE/CREATE/
+- `python scripts/smoke.py` — ✅ **29 passed, 0 failed.** INSERT/UPDATE/DELETE/TRUNCATE/CREATE/
   DROP/ALTER/CREATE INDEX/GRANT/CREATE ROLE all rejected with SQLSTATE 25006 (read-only
   transaction); `pg_authid` and `COPY FROM '/etc/passwd'` rejected with 42501; the four
   legitimate analytical reads all allowed; the grant surface asserted directly
   (`has_schema_privilege('agent','USAGE')` is false, `usesuper` is false); the statement timeout
   fires on `pg_sleep(5)`.
-- `pytest -q` â€” 29 passed. `ruff check .` â€” clean.
+- `pytest -q` — 29 passed. `ruff check .` — clean.
 
 **Deviations from the plan, and why**
 - The plan listed `api`, `ui` and `seed` services in this step's compose file. They are deferred
@@ -163,40 +163,40 @@ Legend: â¬œ Pending Â· ðŸŸ¨ In progress Â· âœ… Done Â· âš ï
 
 **Planted ground truth for later steps**
 Shock month `2018-03`: net revenue falls 279,292 â†’ 190,058 (âˆ’32%) while order volume stays on
-trend (1,741 â†’ 1,791). Two real causes act together â€” the premium-category share drops from 0.28
+trend (1,741 → 1,791). Two real causes act together — the premium-category share drops from 0.28
 to 0.11, and orders with an `SP` seller run late at 0.34 vs 0.08, pushing cancellations from
 1.6% to 11.2%. One decoy: review scores fall in the same month, but downstream of the delays.
 One prompt-injection attempt sits in a review comment inside that month. All of it is written to
 `db/seed/raw/_manifest.json` so the eval suite reads ground truth instead of hard-coding it.
 
-### Step 3 â€” Config, structured logging, run/trace/audit persistence
+### Step 3 — Config, structured logging, run/trace/audit persistence
 
-**Status:** âœ… Done Â· **Date:** 2026-08-24
+**Status:** ✅ Done · **Date:** 2026-08-24
 
 **Built**
-- `src/analyst_agent/config.py` â€” pydantic-settings. The two DSNs are **separate typed fields**
+- `src/analyst_agent/config.py` — pydantic-settings. The two DSNs are **separate typed fields**
   rather than one connection string with a role switch, so mis-wiring the tool layer is a
   visible mistake instead of a silent privilege escalation. Per-node effort tiers
   (`low`/`high`/`xhigh`), SQL safety limits, and budget caps all live here.
-- `src/analyst_agent/observability/logging.py` â€” structlog routed *through* stdlib logging, so
+- `src/analyst_agent/observability/logging.py` — structlog routed *through* stdlib logging, so
   our events and uvicorn's / psycopg's output come out as one consistent JSON stream instead of
   two interleaved formats. `run_id` / `step_id` / `node` / `tool` / `query_id` bind via
   contextvars, so a node binds once and everything beneath it inherits the context. A
   `redact_secrets` processor scrubs registered secrets from every value including nested dicts
   and exception text; `truncate_sql` keeps log lines readable since the full statement is always
   in `sql_audit` anyway.
-- `db/migrations/001_agent_state.sql` â€” schema `agent` with 9 tables: `runs`, `run_steps`,
+- `db/migrations/001_agent_state.sql` — schema `agent` with 9 tables: `runs`, `run_steps`,
   `tool_calls`, `sql_audit`, `approvals`, `findings`, `hypotheses`, `charts`,
   `schema_migrations`.
-- `scripts/migrate.py` â€” a plain migration runner with per-file checksums, so editing an
+- `scripts/migrate.py` — a plain migration runner with per-file checksums, so editing an
   already-applied migration is detected rather than silently diverging. Deliberately not
   Alembic: the schema carries security-relevant CHECK constraints and those should stay
   reviewable as SQL.
-- `src/analyst_agent/db/engine.py` â€” two pools. The read-only pool additionally pins
+- `src/analyst_agent/db/engine.py` — two pools. The read-only pool additionally pins
   `default_transaction_read_only=on` and the statement timeout at *session* level on top of the
   role settings, and `assert_read_only()` turns a mis-pasted DSN into a startup failure instead
   of an incident found later.
-- `src/analyst_agent/db/repository.py` â€” every self-observation write, plus `get_trace()`, the
+- `src/analyst_agent/db/repository.py` — every self-observation write, plus `get_trace()`, the
   full reconstruction the API and the UI evidence drawer are built on. A `step()` context
   manager records node entry/exit and binds the log context in one place.
 - `tests/unit/test_logging.py` (13 tests), `tests/integration/test_repository.py` (14 tests).
@@ -215,12 +215,12 @@ document's promises are enforced by the database:
 All four are asserted as tests that expect `CheckViolation`, not just documented.
 
 **Verification**
-- `python scripts/migrate.py` â€” âœ… applied `001_agent_state`; `--status` reports 1 applied, 0
+- `python scripts/migrate.py` — ✅ applied `001_agent_state`; `--status` reports 1 applied, 0
   pending. 9 tables and 10 check constraints present in schema `agent`.
-- `engine.assert_read_only()` â€” âœ… read-only pool verified as `analyst_ro`, non-superuser.
-- `pytest -q` â€” âœ… **56 passed** (13 logging/config unit, 14 repository integration, 29
+- `engine.assert_read_only()` — ✅ read-only pool verified as `analyst_ro`, non-superuser.
+- `pytest -q` — ✅ **56 passed** (13 logging/config unit, 14 repository integration, 29
   read-only role).
-- `ruff check .` â€” clean. `mypy` â€” âœ… no issues in 18 source files.
+- `ruff check .` — clean. `mypy` — ✅ no issues in 18 source files.
 
 **Two real bugs found and fixed while verifying**
 - `ANTHROPIC_API_KEY=` (the empty placeholder that `.env.example` ships) was being read as a
@@ -230,26 +230,26 @@ All four are asserted as tests that expect `CheckViolation`, not just documented
   tries to JSON-parse a tuple field from dotenv *before* validators run. Fixed with
   `Annotated[..., NoDecode]` so the comma-splitting validator actually gets the raw string.
 
-### Step 4 â€” `sql_guard`, the SQL safety layer
+### Step 4 — `sql_guard`, the SQL safety layer
 
-**Status:** âœ… Done Â· **Date:** 2026-08-24 Â· **Tag:** `v0.2-sql-safety`
+**Status:** ✅ Done · **Date:** 2026-08-24 · **Tag:** `v0.2-sql-safety`
 
 **Built**
-- `sql_guard/errors.py` â€” `GuardVerdict` with `allowed` and `requires_approval` as *separate*
+- `sql_guard/errors.py` — `GuardVerdict` with `allowed` and `requires_approval` as *separate*
   fields, because they answer different questions: a query can be structurally fine and still
   need a human. Reason codes are stable strings so tests, the audit table and the eval graders
   share one vocabulary.
-- `sql_guard/policy.py` â€” the policy as **data**: 20 denied node types, 30 denied functions,
+- `sql_guard/policy.py` — the policy as **data**: 20 denied node types, 30 denied functions,
   forbidden schemas, and the sensitive-column registry. Reviewable on its own, separate from
   the walk that applies it.
-- `sql_guard/catalog.py` â€” a committed `STATIC_CATALOG` snapshot (12 objects, 79 columns)
+- `sql_guard/catalog.py` — a committed `STATIC_CATALOG` snapshot (12 objects, 79 columns)
   alongside `load_catalog()` from `information_schema`. The snapshot is what lets the whole
   hostile-query suite run in CI **with no database**.
-- `sql_guard/column_policy.py` â€” three sensitivity tiers, because "sensitive" is not one thing.
-- `sql_guard/validator.py` â€” the AST walk.
-- `sql_guard/explain_gate.py` â€” `EXPLAIN` (never `ANALYZE`) with a cost ceiling; over it,
+- `sql_guard/column_policy.py` — three sensitivity tiers, because "sensitive" is not one thing.
+- `sql_guard/validator.py` — the AST walk.
+- `sql_guard/explain_gate.py` — `EXPLAIN` (never `ANALYZE`) with a cost ceiling; over it,
   escalate rather than block.
-- `sql_guard/__init__.py` â€” `check()`, the single entry point, running the layers in order.
+- `sql_guard/__init__.py` — `check()`, the single entry point, running the layers in order.
 
 **The finding that shaped the design**
 Probing sqlglot before writing anything showed that
@@ -258,8 +258,8 @@ Probing sqlglot before writing anything showed that
 WITH x AS (DELETE FROM analytics.orders RETURNING *) SELECT * FROM x
 ```
 
-parses with a **`Select` at the root**. A root-statement-type check â€” the obvious
-implementation, and the one a keyword denylist amounts to â€” would have cleared a deletion.
+parses with a **`Select` at the root**. A root-statement-type check — the obvious
+implementation, and the one a keyword denylist amounts to — would have cleared a deletion.
 Denied node types are therefore matched *anywhere in the tree*, and the root check is only the
 first of six gates. Five variants of this attack are in the suite.
 
@@ -268,13 +268,13 @@ first of six gates. Five variants of this attack are in the suite.
 | Tier | Columns | Rule | Why |
 |---|---|---|---|
 | `direct_identifier` | `customer_contact.{full_name,email,phone,street_address}` | restricted anywhere outside an approved aggregate, **including a WHERE filter** | filtering by an email address is a person-level lookup, not analysis |
-| `pseudonymous` | `customers.customer_unique_id` | only *projecting* it in the outermost select is restricted | grouping and joining on it is ordinary work â€” the approved repeat-customer metric needs exactly that; projecting it is what yields one row per person |
+| `pseudonymous` | `customers.customer_unique_id` | only *projecting* it in the outermost select is restricted | grouping and joining on it is ordinary work — the approved repeat-customer metric needs exactly that; projecting it is what yields one row per person |
 | `precise_location` | `geolocation.{lat,lng}` | aggregate yes, return no; `min`/`max` excluded | `min(lat)` returns a real observed coordinate, which is a disclosure rather than an aggregate |
 
-A restricted column **escalates and is never silently stripped** â€” the reviewer sees exactly
+A restricted column **escalates and is never silently stripped** — the reviewer sees exactly
 what was asked for, and the agent is not handed a quietly rewritten result to reason over.
 
-**Verification â€” the security regression net**
+**Verification — the security regression net**
 `pytest tests/unit/test_sql_guard.py` â†’ **127 passed**, no database required:
 
 - **79 hostile queries, all rejected.** 8 statement-stacking shapes, 5 DML-at-root, 5
@@ -282,12 +282,12 @@ what was asked for, and the agent is not handed a quietly rewritten result to re
   non-reads (`INTO`, `FOR UPDATE`), 16 dangerous-function calls including three buried in
   subqueries, 11 catalog/forbidden-schema reads, 5 out-of-allowlist objects, 3 unbounded
   cartesian products, 4 unparseable or empty, and 6 comment/casing tricks.
-- **14 escalations** â€” restricted columns, wildcard projections, and scalar functions wrapping
+- **14 escalations** — restricted columns, wildcard projections, and scalar functions wrapping
   a restricted column.
-- **18 legitimate queries, all allowed** â€” including both planted-cause diagnostic queries,
+- **18 legitimate queries, all allowed** — including both planted-cause diagnostic queries,
   window functions, set operations, and the approved-aggregate cases. A guard that blocks real
   work gets switched off, so this half of the corpus matters as much as the hostile half.
-- One asserted global property: **no hostile query ever produces runnable SQL** â€” a rejection
+- One asserted global property: **no hostile query ever produces runnable SQL** — a rejection
   yields `rewritten_sql is None`, so there is nothing for a buggy caller to execute.
 
 Full suite: `pytest -q` â†’ **190 passed**. `ruff` clean, `mypy` clean (24 files),
@@ -295,11 +295,11 @@ Full suite: `pytest -q` â†’ **190 passed**. `ruff` clean, `mypy` clean (24 
 
 **Two real bugs the corpus caught**
 1. **`count(*)` was read as a wildcard projection.** The `*` in `count(*)` is an `exp.Star`, so
-   every `count(*)` over a table that happens to hold a restricted column escalated â€”
+   every `count(*)` over a table that happens to hold a restricted column escalated —
    `SELECT geolocation_state, count(*) FROM analytics.geolocation GROUP BY 1` among them. A
    guard that escalates ordinary aggregation is a guard that gets disabled. Fixed by skipping
    a `Star` whose parent is a function.
-2. **A CTE could shadow a forbidden object â€” a genuine bypass.** CTE aliases must be excluded
+2. **A CTE could shadow a forbidden object — a genuine bypass.** CTE aliases must be excluded
    from the catalog check, but the code skipped any table whose *name* matched a CTE alias.
    So `WITH pg_authid AS (SELECT 1) SELECT * FROM pg_catalog.pg_authid` skipped the allowlist
    entirely and was **allowed**. The same trick worked for `public.secrets`. In SQL a qualified
@@ -309,26 +309,26 @@ Full suite: `pytest -q` â†’ **190 passed**. `ruff` clean, `mypy` clean (24 
 **Drift protection**
 `tests/integration/test_sql_guard_live.py` asserts `STATIC_CATALOG` still matches the live
 schema object-for-object and column-for-column. Without it, a migration could leave the unit
-suite validating against a schema that no longer exists â€” and passing while doing so.
+suite validating against a schema that no longer exists — and passing while doing so.
 
 **Note**
 Changing the `ro_conn` test fixture to `dict_row` (matching what `db/engine.py` configures on
 the real pools) broke five Step 2 tests that indexed rows as tuples. They were updated rather
 than the fixture reverted: a test should exercise the row shape the production code assumes.
 
-### Step 5 â€” Metrics layer (approved KPI definitions)
+### Step 5 — Metrics layer (approved KPI definitions)
 
-**Status:** âœ… Done Â· **Date:** 2026-08-25
+**Status:** ✅ Done · **Date:** 2026-08-25
 
 **Built**
-- `metrics/loader.py` â€” pydantic models for a definition, with `extra="forbid"` so a typo in a
+- `metrics/loader.py` — pydantic models for a definition, with `extra="forbid"` so a typo in a
   field name fails at startup rather than being silently ignored, and a shape validator that
   refuses a half-filled definition.
-- `metrics/definitions/*.yaml` â€” **12 approved metrics**: `revenue`, `gross_revenue`, `orders`,
+- `metrics/definitions/*.yaml` — **12 approved metrics**: `revenue`, `gross_revenue`, `orders`,
   `units`, `aov`, `cancellation_rate`, `on_time_delivery_rate`, `avg_delivery_days`,
   `avg_review_score`, `freight_ratio`, `repeat_customer_rate`, `seller_concentration`.
   73 lookup keys across names, titles and aliases.
-- `metrics/registry.py` â€” resolution and rendering.
+- `metrics/registry.py` — resolution and rendering.
 - `scripts/generate_metrics_catalog.py` and the generated
   [docs/metrics-catalog.md](docs/metrics-catalog.md) (522 lines).
 
@@ -339,12 +339,12 @@ SQL expression. The registry assembles the statement from those parts, and value
 bound parameters.
 
 The consequence is structural rather than advisory: **for an approved metric, no free text from
-the model reaches SQL.** The model picks a *name* â€” `revenue`, broken down by `product_category`,
-filtered to `month = 2018-03` â€” and every name maps to an expression a human wrote and reviewed.
+the model reaches SQL.** The model picks a *name* — `revenue`, broken down by `product_category`,
+filtered to `month = 2018-03` — and every name maps to an expression a human wrote and reviewed.
 A hostile filter value stays a value; the test asserting that a `'; DROP TABLE ...` filter comes
 back as a bound parameter and returns zero rows is the proof.
 
-Two metrics (`repeat_customer_rate`, `seller_concentration`) genuinely do not fit that mould â€”
+Two metrics (`repeat_customer_rate`, `seller_concentration`) genuinely do not fit that mould —
 one needs a per-person subquery, the other a window function. They declare `shape: custom` and
 carry their own statement, and are held to the same bar a different way: every rendered metric,
 custom or not, is asserted to pass `sql_guard`.
@@ -357,18 +357,18 @@ on every single run. The test asserting the key is absent from the outermost pro
 down.
 
 **Verification**
-- `pytest tests/unit/test_metrics_registry.py` â€” **55 passed**, no database. Covers alias
+- `pytest tests/unit/test_metrics_registry.py` — **55 passed**, no database. Covers alias
   resolution across 21 phrasings, refusal of 8 unapproved terms (`ltv`, `churn`, `gross margin`,
-  `conversion rate`, â€¦), suggestions on a near miss, rejection of duplicate names and of an
+  `conversion rate`, …), suggestions on a near miss, rejection of duplicate names and of an
   ambiguous alias, parameter binding, injection-in-a-filter-value, undeclared dimensions,
   join deduplication, and custom-shape rules.
-- `pytest tests/integration/test_metric_sql.py` â€” **53 passed**. Every one of the 12 metrics is
+- `pytest tests/integration/test_metric_sql.py` — **53 passed**. Every one of the 12 metrics is
   asserted to (a) pass `sql_guard`, (b) execute and return a non-null number over the whole
-  dataset, (c) execute over a date window, and (d) work for **every dimension it declares** â€”
+  dataset, (c) execute over a date window, and (d) work for **every dimension it declares** —
   a wrong join or expression would otherwise only surface mid-run.
 - Three tests reach through the metric layer to the planted ground truth: the revenue drop in
   `2018-03`, the category mix shift, and the cancellation spike. A fourth asserts the **decoy**
-  moves too â€” review scores fall in the same month â€” because the trap has to genuinely be in the
+  moves too — review scores fall in the same month — because the trap has to genuinely be in the
   data for Step 8's refutation logic to be worth testing.
 - Full suite: `pytest -q` â†’ **298 passed**. `ruff` clean, `mypy` clean (26 files).
 
@@ -381,28 +381,28 @@ wrong formula.
 **Two small things caught while building**
 - Dimensions initially referenced aliases (`c.`, `p.`, `s.`) that the base `from_sql` did not
   provide. Each dimension now declares the `join` it needs, appended only when that dimension is
-  used â€” carrying every possible join would both slow the common case and risk changing the row
+  used — carrying every possible join would both slow the common case and risk changing the row
   count through a join that fans out.
 - Two caveats written with a colon in them parsed as YAML mappings rather than strings. The
   loader's validation caught both at load time, which is the argument for validating definitions
   at startup rather than trusting them.
 
-### Step 6 â€” The five tools
+### Step 6 — The five tools
 
-**Status:** âœ… Done Â· **Date:** 2026-08-25
+**Status:** ✅ Done · **Date:** 2026-08-25
 
 **Built**
-- `tools/base.py` â€” one `Tool` base class carrying validation, timing, the audit write and
+- `tools/base.py` — one `Tool` base class carrying validation, timing, the audit write and
   logging, so a new tool cannot quietly skip the audit. Plus `anthropic_tool_schema`, which
   makes a pydantic model `strict`-compatible: `additionalProperties: false`, every property in
   `required`, and optional arguments expressed as **nullable** rather than omitted.
-- `tools/frames.py` â€” a bounded LRU frame store with **rehydration from the audit trail**.
+- `tools/frames.py` — a bounded LRU frame store with **rehydration from the audit trail**.
 - `tools/metric_lookup.py`, `tools/schema_inspector.py`, `tools/sql_runner.py`,
   `tools/python_analysis.py`, `tools/chart_builder.py`, `tools/palette.py`, `tools/registry.py`.
 
 **Two conventions that shaped every tool**
-- **A refusal is a result, not an error.** When a tool declines â€” no approved metric, a query the
-  guard rejected, a chart that would mislead â€” it returns `ok=True` with a `refusal`. Conflating
+- **A refusal is a result, not an error.** When a tool declines — no approved metric, a query the
+  guard rejected, a chart that would mislead — it returns `ok=True` with a `refusal`. Conflating
   that with a crash would lose the distinction in the trace and would teach the model to retry
   rather than change course. `tool_calls` has a separate `refusal` column for exactly this.
 - **Nothing returns silently empty.** An empty result set comes back as a success whose summary
@@ -410,8 +410,8 @@ wrong formula.
 
 **`python_analysis`: the deliberate limitation**
 The obvious implementation is to let the model write pandas and `exec` it. Instead the tool
-exposes **eight enumerated operations** â€” describe, group_by, share_of_total,
-period_over_period, rolling, correlation, top_n, linear_fit â€” each implemented here and validated
+exposes **eight enumerated operations** — describe, group_by, share_of_total,
+period_over_period, rolling, correlation, top_n, linear_fit — each implemented here and validated
 against the frame's real columns. Some analyses are therefore not expressible; that is recorded
 as a known limitation. What it buys is that **no model-authored code executes anywhere in this
 system**. The `correlation` summary carries its own warning that association is not cause, since
@@ -421,13 +421,13 @@ the summary is the part the model reliably reads.
 `python_analysis` and `chart_builder` work on a previous `query_id`, so that result has to live
 somewhere between calls. Keeping it purely in memory breaks the recovery Step 10 requires, so a
 missing frame is **rebuilt by re-running the statement recorded in `sql_audit`**. Only queries the
-audit records as `allowed` and `executed` can be rehydrated â€” asserted by a test â€” so this cannot
+audit records as `allowed` and `executed` can be rehydrated — asserted by a test — so this cannot
 become a route to run something the guard refused.
 
 **Charts: palette validated, not chosen**
 The categorical palette was run through the data-viz validator rather than picked by eye: on the
 light surface all checks pass (worst adjacent CVD Î”E 9.1, normal-vision 19.6) with a contrast warn
-on three slots that obliges *relief* â€” every chart is returned alongside its data and rendered
+on three slots that obliges *relief* — every chart is returned alongside its data and rendered
 next to the table, which is that relief. Dark passes outright. Three rules are enforced in code:
 no dual axis ever (refused, with the alternatives named); hues assigned in fixed slot order and
 never cycled, with the tail folding into "Other" **and the fold reported**; and a legend only for
@@ -435,10 +435,10 @@ two or more series. Scatter compares every pair at once and the full eight canno
 all-pairs floors, so scatter caps at the three slots that do.
 
 **Verification**
-- `pytest tests/unit/test_tool_base.py` â€” **21 passed**, no database. Schema strictness, the
+- `pytest tests/unit/test_tool_base.py` — **21 passed**, no database. Schema strictness, the
   refusal-versus-error contract, invalid and unknown arguments, and a check that **every argument
-  of every tool is documented** â€” an undocumented argument is one the model will guess at.
-- `pytest tests/integration/test_tools.py` â€” **26 passed**. All five tools, their refusal paths,
+  of every tool is documented** — an undocumented argument is one the model will guess at.
+- `pytest tests/integration/test_tools.py` — **26 passed**. All five tools, their refusal paths,
   frame rehydration, the rejected-query rehydration guard, series folding, the scatter cap, and a
   chain test asserting `metric_lookup â†’ sql_runner â†’ python_analysis â†’ chart_builder` is fully
   accounted for in the trace with a duration on every call.
@@ -449,37 +449,37 @@ all-pairs floors, so scatter caps at the three slots that do.
 1. **Every monetary figure reached the model as a string.** Postgres returns `numeric` as a
    `Decimal`, and a `Decimal` has neither `isoformat` nor `item`, so the coercion helper fell
    through to `str()` and `sum(oi.price)` arrived as `"139184.93"`. The model would then either
-   compare numbers lexically or burn a turn parsing them â€” exactly what that helper existed to
+   compare numbers lexically or burn a turn parsing them — exactly what that helper existed to
    prevent. `Decimal` is now handled first and explicitly, with a test asserting the types.
 2. **Foreign keys came back empty for every table.** `information_schema.constraint_column_usage`
    only returns rows for tables the current user *owns*, so as `analyst_ro` every table looked
-   unrelated to every other â€” and the agent needs those join paths to write correct SQL. Rewritten
+   unrelated to every other — and the agent needs those join paths to write correct SQL. Rewritten
    against `pg_constraint`, which is readable, with a test asserting `order_items` resolves all
    three of its parents.
 
 Also caught: the Plotly spec contained numpy arrays, which psycopg cannot store as `jsonb`.
 Serialising through Plotly's own encoder fixes it and is cheaper than writing a converter.
 
-### Step 7 â€” LangGraph state, checkpointer, LLM wrapper
+### Step 7 — LangGraph state, checkpointer, LLM wrapper
 
-**Status:** âœ… Done Â· **Date:** 2026-08-26 Â· **Tag:** `v0.3-agent-walking-skeleton`
+**Status:** ✅ Done · **Date:** 2026-08-26 · **Tag:** `v0.3-agent-walking-skeleton`
 
 **Built**
-- `agent/state.py` â€” `AnalystState` as a TypedDict with `operator.add` reducers on the
+- `agent/state.py` — `AnalystState` as a TypedDict with `operator.add` reducers on the
   append-only lists, plus the predicates the graph routes on (`executed_query_ids`,
   `material_findings`, `tested_hypotheses`, `every_finding_has_evidence`).
-- `agent/budget.py` â€” five simultaneous caps; the first to bind stops the run.
-- `agent/llm.py` â€” the only module in the project that imports `anthropic`.
-- `agent/checkpointer.py` â€” `PostgresSaver` on the `app_rw` pool, its own pool because the
+- `agent/budget.py` — five simultaneous caps; the first to bind stops the run.
+- `agent/llm.py` — the only module in the project that imports `anthropic`.
+- `agent/checkpointer.py` — `PostgresSaver` on the `app_rw` pool, its own pool because the
   checkpointer needs autocommit and would otherwise change that under the repository.
-- `agent/prompts.py` â€” the cached stable prefix (~1,240 tokens: role, safety rules, schema card,
+- `agent/prompts.py` — the cached stable prefix (~1,240 tokens: role, safety rules, schema card,
   metric catalogue).
 - `agent/nodes/schemas.py`, `agent/nodes/linear.py`, `agent/graph.py`.
-- `tests/fakes.py` â€” a scripted model, so the graph is testable with no API key.
+- `tests/fakes.py` — a scripted model, so the graph is testable with no API key.
 
 **Claude API conventions, applied**
 `claude-opus-5` un-suffixed; `thinking={"type": "adaptive"}` and no `budget_tokens` (rejected
-outright on this model); the cost lever is `output_config.effort`, tiered per node â€” `low` for
+outright on this model); the cost lever is `output_config.effort`, tiered per node — `low` for
 the clarify gate, `high` for SQL authoring and interpretation, `xhigh` for synthesis. Server-side
 fallbacks are **enabled by default** (`betas=["server-side-fallback-2026-07-01"]`,
 `fallbacks="default"`) so a safety refusal reroutes by category instead of failing the run, and
@@ -489,8 +489,8 @@ retried, because it will fail identically next time and retrying hides it behind
 
 **Why the nodes take their dependencies by injection**
 Every node is a closure over an LLM and a tool registry rather than reaching for a global. That
-is not a testing nicety: the **routing is where the policy lives** â€” "stop and ask", "park on an
-escalation", "a spent budget still produces an answer" â€” and routing has to be asserted
+is not a testing nicety: the **routing is where the policy lives** — "stop and ask", "park on an
+escalation", "a spent budget still produces an answer" — and routing has to be asserted
 deterministically, not through whatever the model happens to say. A scripted model drives the
 whole graph in CI with no key.
 
@@ -500,19 +500,19 @@ END when the guard escalated, so there is no path around an approval; `author_sq
 straight to `synthesize` when the budget is spent, which is what turns exhaustion into a partial
 answer rather than an exception. Step 8 replaces the single `interpret â†’ synthesize` edge with
 the investigation loop, and that edge becomes the one enforcing "a material finding needs two
-tested hypotheses" â€” the shape here is deliberately the shape that edge slots into.
+tested hypotheses" — the shape here is deliberately the shape that edge slots into.
 
 **Verification**
-- `pytest tests/unit/test_agent_state.py` â€” **15 passed**, no database. Budget limits, the
+- `pytest tests/unit/test_agent_state.py` — **15 passed**, no database. Budget limits, the
   extension grant surviving a restore, the wall clock deliberately restarting on resume, and each
   routing predicate.
-- `pytest tests/integration/test_graph_linear.py` â€” **9 passed**. End to end through all eight
+- `pytest tests/integration/test_graph_linear.py` — **9 passed**. End to end through all eight
   nodes; per-node effort tiers asserted rather than assumed; an ambiguous question parking at
   `clarifying` with **zero queries considered**; an unapproved metric recorded as unapproved; an
   escalated query parking at `awaiting_approval` with `synthesize` never reached; a rejected
   query still producing an answer that cites nothing; a spent budget producing a `truncated` run
   with a stated reason.
-- **The recovery test discards the graph object and rebuilds it between the two halves** â€” which
+- **The recovery test discards the graph object and rebuilds it between the two halves** — which
   is what a process restart amounts to. Nothing carries the run forward but the checkpoint, and
   the resumed half continues rather than starting over (`intake` appears exactly once).
 - Full suite: **369 passed**. `ruff` clean, `mypy` clean (42 files). Guard suite still 127/127.
@@ -525,18 +525,18 @@ but "it works against the live API" is not yet established, and is not claimed. 
 
 **Three real problems found while building**
 1. **A CTE-style state bug: metric placeholders duplicated.** `clarify_gate` emitted placeholder
-   rows into `resolved_metrics`, which uses an append-only reducer â€” so the real resolution
+   rows into `resolved_metrics`, which uses an append-only reducer — so the real resolution
    *appended* rather than replacing, leaving both in state and both in the model's context. The
    terms now travel as scratch and only the authoritative resolution is recorded.
 2. **numpy's type stubs need Python 3.12+ syntax**, which broke `mypy` under the declared floor
    of 3.11. Rather than paper over it, `requires-python` moved to `>=3.12`: we develop and test on
    3.13 and have never run 3.11, so the old floor was a claim we could not support.
 3. **mypy cannot bind LangGraph's `add_node` overloads when the node arrives as a `Callable`
-   alias** â€” verified empirically with a minimal repro: the same call type-checks with an inline
+   alias** — verified empirically with a minimal repro: the same call type-checks with an inline
    `def` and fails with an aliased one. Since the nodes come from factories by design, this is
    handled with a single documented ignore in one helper rather than eight scattered ones.
 
-### Step 8 â€” Multi-hypothesis investigation loop
+### Step 8 — Multi-hypothesis investigation loop
 
 **Status:** OK Done - 2026-08-26 - Tag: `v0.4-investigation`
 
@@ -612,7 +612,7 @@ command failed at once. Recovered by rebuilding the venv from `C:\ProgramData\mi
 3.13.5) and reinstalling Git to `K:\software\Git`; 17 dead `D:` PATH entries removed. No repo
 history was lost. Six loop tests written just before the shell died had to be rewritten.
 
-### Step 9 â€” FastAPI business question API
+### Step 9 — FastAPI business question API
 
 **Status:** OK Done - 2026-08-26
 
@@ -814,3 +814,85 @@ out-of-scope questions were executed end to end and correctly recorded as errore
 and proves nothing about the agent's accuracy. **There is no baseline report yet.** The key
 metrics table in this file stays empty until there is one, rather than being filled with numbers
 from a scripted model.
+
+### Step 13 — Dockerized stack, CI, README
+
+**Status:** ✅ Done · **Date:** 2026-08-26 · **Tag:** `v0.7-deployable`
+
+**Built**
+- `Dockerfile` — multi-stage, non-root (uid 10001), dependency metadata copied before source so a
+  code change does not invalidate the install layer. One image serves both API and UI: they share
+  every dependency and differ only in the command.
+- `docker-compose.yml` — `db`, a one-shot `seed`, `api`, `ui`. Ordering is *enforced*, not hoped
+  for: `api` waits on `seed` completing successfully, and `seed` waits on `db` being healthy.
+  Without that the first request can hit an empty schema and the failure looks like an agent bug.
+- `.github/workflows/ci.yml` — three jobs.
+- `README.md` — rewritten as the front door rather than a stub.
+
+**CI is shaped around what can run where**
+The `static` job needs no database at all, because the guard suite runs against a committed
+catalogue snapshot — so lint, types and **79 hostile queries** are the fast feedback. The
+`integration` job applies the real `db/init` SQL against a service container, which doubles as a
+test that those scripts work outside Docker, then seeds synthetically (never Kaggle: CI must not
+depend on credentials or a network download), asserts control C1 *before* anything else, and runs
+`evals --validate`. The `docker` job is the acceptance test: build, `compose up --wait`, and probe
+the API's own readiness.
+
+The guard suite is a named step so a failure reads as what it is. If a hostile query gets through,
+nothing else about that build matters.
+
+**Verification — the stack actually started**
+- `docker compose build` → image `analyst-agent:latest`, 1.08 GB, running as `uid=10001(analyst)`.
+- `docker compose up --wait api` → `db` healthy, `seed` exited 0, `api` **healthy**.
+- Probed from outside: `/healthz`, `/readyz` (`read_only_verified: true`), `/v1/metrics` (12),
+  `/v1/schema` (12 objects), `/docs` 200.
+- Inside the database: 36,198 orders loaded, 3 migrations applied.
+- `docker compose exec api python scripts/smoke.py` → **29/29**. Control C1 verified from inside
+  the container, not just on the host.
+- `ui` came up healthy and serves.
+- Full suite on the host: **470 passed**. ruff clean, mypy clean (51 files).
+
+**Two things worth recording**
+- The first `compose up` failed on `port is already allocated` — an unrelated project's container
+  already had 8000. Every published port is parameterised, so the fix was
+  `$env:API_PORT="8010"` rather than editing the compose file, and the README now says so.
+  Someone else's container is not a reason to edit shared configuration.
+- A half-created container from that failed attempt stayed attached to a network `down -v` had
+  already removed, which surfaced as `failed to resolve host 'db'` — a DNS error that looked like
+  a compose misconfiguration and was not. `--force-recreate` cleared it.
+
+### Step 14 — Final technical report
+
+**Status:** ✅ Done · **Date:** 2026-08-26 · **Tag:** `v1.0`
+
+`docs/final-technical-report.md`: where the project stands, the architecture, the seven decisions
+that shaped it *with what each one cost*, the security posture, what went wrong and what it
+taught, the evaluation instrument and what it has not yet told us, known limitations, and ten
+things production would still require in the order they would matter.
+
+**It leads with what has not been verified.** No agent behaviour has been run against a real
+model — every one is verified against a scripted model, because `ANTHROPIC_API_KEY` was never
+available. The report states that in its first section rather than its last, and separates the two
+kinds of claim throughout: a routing bug is a bug in this repository, while a weak hypothesis is a
+property of the model and the prompt and would show up as an eval score. That score does not
+exist.
+
+**Also fixed in this step: an encoding fault of my own making.**
+`Set-Content -Encoding utf8` on Windows PowerShell 5.1 writes a BOM and round-trips through
+cp1252, which double-encoded `README.md`, `progress.md`, `api/main.py`, `tests/integration/test_ui.py`
+and the `Makefile` — a middle dot (`U+00B7`, bytes `C2 B7`) came back out as two characters
+(`C3 82 C2 B7`). Found by scanning every text file for those marker bytes rather than by noticing
+it in a diff.
+
+`progress.md` needed three passes and then a rebuild. A whole-file reverse failed on the first
+unmappable byte; a line-by-line pass got most of it; and some lines had been through the
+round-trip *twice*, so one reverse was not enough. Worse, every status-board update this session
+was a PowerShell `-replace` with the emoji typed literally in the pattern — once the file was
+double-encoded those patterns no longer matched, and `-replace` reports nothing when it matches
+nothing, so steps 9 through 13 silently stayed marked pending while their entries were being
+appended below. The board was rebuilt from an explicit list rather than patched again, because
+patching is precisely what failed.
+
+All files are now clean UTF-8 with no BOM. The lesson is narrow and worth keeping: on Windows
+PowerShell 5.1, do not use `Set-Content`/`Add-Content` to write a file containing non-ASCII text,
+and do not trust a `-replace` that reports no error.

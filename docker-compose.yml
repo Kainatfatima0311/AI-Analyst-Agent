@@ -1,6 +1,25 @@
-# Step 2 provides the database. The api, ui and seed services are added in Step 13,
-# once the Dockerfile exists; until then seed from the host with `python scripts/seed_db.py`.
+# The whole stack. `docker compose up` on a clean clone is the acceptance test for Step 13:
+# nothing here depends on a developer's machine beyond Docker itself.
+#
+# The ordering matters and is enforced rather than hoped for: api and ui wait for the seed job to
+# finish, and the seed job waits for the database to be healthy. Without that, the first request
+# can arrive against an empty schema and the failure looks like a bug in the agent.
 name: analyst-agent
+
+x-service-env: &service-env
+  DB_RW_DSN: postgresql://${POSTGRES_USER:-app_rw}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-analyst}
+  DB_RO_DSN: postgresql://${ANALYST_RO_USER:-analyst_ro}:${ANALYST_RO_PASSWORD:?set ANALYST_RO_PASSWORD in .env}@db:5432/${POSTGRES_DB:-analyst}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  ANALYST_MODEL: ${ANALYST_MODEL:-claude-opus-5}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  ENVIRONMENT: ${ENVIRONMENT:-dev}
+  ALLOWED_SCHEMAS: ${ALLOWED_SCHEMAS:-analytics}
+  SQL_STATEMENT_TIMEOUT_MS: ${SQL_STATEMENT_TIMEOUT_MS:-15000}
+  SQL_DEFAULT_ROW_LIMIT: ${SQL_DEFAULT_ROW_LIMIT:-5000}
+  SQL_MAX_EXPLAIN_COST: ${SQL_MAX_EXPLAIN_COST:-5000000}
+  MAX_QUERIES_PER_RUN: ${MAX_QUERIES_PER_RUN:-25}
+  APPROVAL_TIMEOUT_SECONDS: ${APPROVAL_TIMEOUT_SECONDS:-1800}
 
 services:
   db:
@@ -10,7 +29,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-analyst}
       POSTGRES_USER: ${POSTGRES_USER:-app_rw}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-      # Consumed by db/init/00_bootstrap.sh when the cluster is first created.
+      # Read by db/init/00_bootstrap.sh when the cluster is first created.
       ANALYST_RO_USER: ${ANALYST_RO_USER:-analyst_ro}
       ANALYST_RO_PASSWORD: ${ANALYST_RO_PASSWORD:?set ANALYST_RO_PASSWORD in .env}
       SQL_STATEMENT_TIMEOUT_MS: ${SQL_STATEMENT_TIMEOUT_MS:-15000}
@@ -25,6 +44,59 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    restart: unless-stopped
+
+  # One-shot: applies migrations, then loads the dataset. Exits 0 and stays exited.
+  seed:
+    build: .
+    image: analyst-agent:latest
+    environment: *service-env
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "python scripts/migrate.py && python scripts/seed_db.py --source auto"
+    restart: "no"
+
+  api:
+    build: .
+    image: analyst-agent:latest
+    container_name: analyst-api
+    environment: *service-env
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    command: >
+      uvicorn analyst_agent.api.main:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+
+  ui:
+    build: .
+    image: analyst-agent:latest
+    container_name: analyst-ui
+    environment:
+      <<: *service-env
+      # Reaches the API by service name, not localhost — inside its own container, localhost is
+      # the UI itself.
+      API_BASE_URL: http://api:8000
+    ports:
+      - "${UI_PORT:-8501}:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    command: >
+      streamlit run src/analyst_agent/ui/streamlit_app.py
+      --server.port 8501 --server.address 0.0.0.0 --server.headless true
     restart: unless-stopped
 
 volumes:

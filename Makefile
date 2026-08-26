@@ -1,4 +1,4 @@
-﻿.PHONY: help install lint format typecheck test test-unit test-integration guard db-up db-down migrate seed smoke catalog api ui evals docker-up docker-down clean
+.PHONY: help install lint format typecheck test test-unit test-integration guard db-up db-down migrate seed smoke catalog api ui evals docker-up docker-down clean
 
 help:
 	@echo "install           install the package with dev extras"

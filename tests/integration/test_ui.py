@@ -1,6 +1,6 @@
-﻿"""The analyst interface, actually run.
+"""The analyst interface, actually run.
 
-A Streamlit page returning HTTP 200 proves almost nothing â€” the script runs per interaction and
+A Streamlit page returning HTTP 200 proves almost nothing — the script runs per interaction and
 renders client-side, so a broken layout still serves a 200 shell. ``AppTest`` executes the script
 the way Streamlit does and surfaces any exception, which is the only way a UI of this kind gets
 covered at all.
@@ -350,5 +350,5 @@ def test_status_colours_are_not_reused_as_series_colours() -> None:
 
 
 def test_a_chip_renders_label_icon_and_colour() -> None:
-    markup = components.st and theme.chip("Blocked", "âœ•", "#b23c3c")
-    assert "Blocked" in markup and "âœ•" in markup and "#b23c3c" in markup
+    markup = components.st and theme.chip("Blocked", "✕", "#b23c3c")
+    assert "Blocked" in markup and "✕" in markup and "#b23c3c" in markup

@@ -1,4 +1,4 @@
-﻿"""The FastAPI application.
+"""The FastAPI application.
 
 A question is started in the background and the caller gets a ``run_id`` immediately. An
 investigation takes minutes and can pause for a human, so making the caller hold an HTTP
@@ -197,7 +197,7 @@ async def stream(run_id: uuid.UUID) -> EventSourceResponse:
 
     Polls rather than listens: the work happens in a background thread in this same process, and
     a poll against an indexed table is simpler and more robust than wiring a notification channel
-    through it. The stream closes on a terminal status, and on a parked one â€” there is nothing
+    through it. The stream closes on a terminal status, and on a parked one — there is nothing
     further to report until a human acts.
     """
     _run_or_404(run_id)
