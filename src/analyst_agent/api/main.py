@@ -15,10 +15,12 @@ import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
 from analyst_agent.agent.graph import build_graph, resume_after_decision, resume_run
@@ -71,6 +73,20 @@ app = FastAPI(
     summary="Ask a business question; get a conclusion traceable to the queries behind it.",
     lifespan=lifespan,
 )
+
+
+# The interface itself, served from the same origin as the API it calls. Same-origin means no
+# CORS to configure and no second process to run - and it keeps the rule that the UI reaches the
+# database only through these endpoints, because it has no other way to reach anything.
+STATIC = Path(__file__).parent / "static"
+if STATIC.is_dir():
+    app.mount("/app", StaticFiles(directory=STATIC, html=True), name="app")
+
+
+@app.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    """Land on the interface rather than on a 404."""
+    return RedirectResponse(url="/app/")
 
 
 @app.middleware("http")

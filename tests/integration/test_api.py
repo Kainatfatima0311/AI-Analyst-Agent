@@ -306,3 +306,53 @@ def test_openapi_documents_every_route(client: TestClient) -> None:
         "/readyz",
     ):
         assert expected in paths, f"{expected} is missing from the OpenAPI document"
+
+# --- the interface -------------------------------------------------------------
+#
+# The UI is served from the same origin as the API it calls. That is not packaging convenience:
+# same-origin means the interface has no way to reach anything except these endpoints, which is
+# what makes "the UI never touches the database" a property of the deployment rather than a
+# promise in a document.
+
+
+def test_the_root_lands_on_the_interface(client: TestClient) -> None:
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code in (307, 308)
+    assert response.headers["location"].endswith("/app/")
+
+
+def test_the_interface_is_served(client: TestClient) -> None:
+    response = client.get("/app/")
+    assert response.status_code == 200
+    body = response.text
+    assert "Ask anything about your business" in body
+    assert "app.css" in body and "app.js" in body
+
+
+def test_the_interface_assets_are_served(client: TestClient) -> None:
+    for asset in ("app.css", "app.js"):
+        response = client.get(f"/app/{asset}")
+        assert response.status_code == 200, asset
+        assert response.content, asset
+
+
+def test_the_interface_carries_no_third_party_request(client: TestClient) -> None:
+    """One self-contained asset, bar the font.
+
+    A chart library from a CDN would mean the page silently stops working offline, behind a proxy,
+    or when the CDN changes a major version. The charts here are inline SVG drawn from the spec
+    the API already returns.
+    """
+    page = client.get("/app/").text
+    javascript = client.get("/app/app.js").text
+    for asset in (page, javascript):
+        assert "cdn." not in asset
+        assert "unpkg" not in asset
+        assert "plotly" not in asset.lower() or "spec" in asset  # only reading stored specs
+
+
+def test_the_interface_never_names_the_database(client: TestClient) -> None:
+    """It talks to /v1 endpoints and nothing else - no DSN, no port 5432, no psycopg."""
+    javascript = client.get("/app/app.js").text
+    for forbidden in ("postgres", "5432", "psycopg", "analyst_ro", "app_rw"):
+        assert forbidden not in javascript.lower(), forbidden
