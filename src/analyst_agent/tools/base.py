@@ -20,7 +20,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -29,7 +29,6 @@ from analyst_agent.observability.logging import get_logger
 
 log = get_logger(__name__)
 
-TInput = TypeVar("TInput", bound=BaseModel)
 
 
 @dataclass
@@ -109,7 +108,7 @@ def _tighten(node: Any) -> None:
             _tighten(item)
 
 
-class Tool(ABC, Generic[TInput]):
+class Tool[TInput: BaseModel](ABC):
     """Base class for the agent's tools.
 
     Subclasses implement ``run``; ``invoke`` handles validation, timing, the audit write and

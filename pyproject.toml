@@ -7,7 +7,7 @@ name = "analyst-agent"
 version = "0.1.0"
 description = "AI Data Analyst and Business Intelligence Agent — safe SQL, multi-hypothesis investigation, traceable conclusions"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"   # numpy 2.5 type stubs use 3.12+ syntax; 3.11 is untested
 license = { text = "MIT" }
 
 dependencies = [
@@ -61,7 +61,7 @@ analyst_agent = ["metrics/definitions/*.yaml", "agent/prompts/*.md"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 src = ["src", "tests", "evals"]
 
 [tool.ruff.lint]
@@ -77,7 +77,7 @@ ignore = [
 "db/seed/**" = ["S608", "S310", "S311"]      # COPY builder, authenticated download, seeded RNG
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 packages = ["analyst_agent"]
 mypy_path = "src"
 strict_optional = true

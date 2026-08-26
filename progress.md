@@ -15,8 +15,8 @@ Legend: ⬜ Pending · 🟨 In progress · ✅ Done · ⚠️ Done with known is
 | 4 | `sql_guard` — SQL safety layer | ✅ | 2026-08-24 | `feat(sql-guard)` / `v0.2-sql-safety` |
 | 5 | Metrics layer (approved KPI definitions) | ✅ | 2026-08-25 | `feat(metrics)` |
 | 6 | The five tools | ✅ | 2026-08-25 | `feat(tools)` |
-| 7 | LangGraph state, checkpointer, LLM wrapper | 🟨 | — | — |
-| 8 | Multi-hypothesis investigation loop | ⬜ | — | — |
+| 7 | LangGraph state, checkpointer, LLM wrapper | ✅ | 2026-08-26 | `feat(agent)` / `v0.3-agent-walking-skeleton` |
+| 8 | Multi-hypothesis investigation loop | 🟨 | — | — |
 | 9 | FastAPI business question API | ⬜ | — | — |
 | 10 | Human approval gates and recovery | ⬜ | — | — |
 | 11 | Streamlit analyst interface | ⬜ | — | — |
@@ -458,3 +458,79 @@ all-pairs floors, so scatter caps at the three slots that do.
 
 Also caught: the Plotly spec contained numpy arrays, which psycopg cannot store as `jsonb`.
 Serialising through Plotly's own encoder fixes it and is cheaper than writing a converter.
+
+### Step 7 — LangGraph state, checkpointer, LLM wrapper
+
+**Status:** ✅ Done · **Date:** 2026-08-26 · **Tag:** `v0.3-agent-walking-skeleton`
+
+**Built**
+- `agent/state.py` — `AnalystState` as a TypedDict with `operator.add` reducers on the
+  append-only lists, plus the predicates the graph routes on (`executed_query_ids`,
+  `material_findings`, `tested_hypotheses`, `every_finding_has_evidence`).
+- `agent/budget.py` — five simultaneous caps; the first to bind stops the run.
+- `agent/llm.py` — the only module in the project that imports `anthropic`.
+- `agent/checkpointer.py` — `PostgresSaver` on the `app_rw` pool, its own pool because the
+  checkpointer needs autocommit and would otherwise change that under the repository.
+- `agent/prompts.py` — the cached stable prefix (~1,240 tokens: role, safety rules, schema card,
+  metric catalogue).
+- `agent/nodes/schemas.py`, `agent/nodes/linear.py`, `agent/graph.py`.
+- `tests/fakes.py` — a scripted model, so the graph is testable with no API key.
+
+**Claude API conventions, applied**
+`claude-opus-5` un-suffixed; `thinking={"type": "adaptive"}` and no `budget_tokens` (rejected
+outright on this model); the cost lever is `output_config.effort`, tiered per node — `low` for
+the clarify gate, `high` for SQL authoring and interpretation, `xhigh` for synthesis. Server-side
+fallbacks are **enabled by default** (`betas=["server-side-fallback-2026-07-01"]`,
+`fallbacks="default"`) so a safety refusal reroutes by category instead of failing the run, and
+`stop_reason == "refusal"` is checked *before* the content is read. Retries use a
+most-specific-first chain: a 404, a 400 or an auth error is raised immediately rather than
+retried, because it will fail identically next time and retrying hides it behind a timeout.
+
+**Why the nodes take their dependencies by injection**
+Every node is a closure over an LLM and a tool registry rather than reaching for a global. That
+is not a testing nicety: the **routing is where the policy lives** — "stop and ask", "park on an
+escalation", "a spent budget still produces an answer" — and routing has to be asserted
+deterministically, not through whatever the model happens to say. A scripted model drives the
+whole graph in CI with no key.
+
+**Three conditional edges, already**
+`clarify_gate` routes to END when the question cannot be answered as asked; `execute` routes to
+END when the guard escalated, so there is no path around an approval; `author_sql` routes
+straight to `synthesize` when the budget is spent, which is what turns exhaustion into a partial
+answer rather than an exception. Step 8 replaces the single `interpret → synthesize` edge with
+the investigation loop, and that edge becomes the one enforcing "a material finding needs two
+tested hypotheses" — the shape here is deliberately the shape that edge slots into.
+
+**Verification**
+- `pytest tests/unit/test_agent_state.py` — **15 passed**, no database. Budget limits, the
+  extension grant surviving a restore, the wall clock deliberately restarting on resume, and each
+  routing predicate.
+- `pytest tests/integration/test_graph_linear.py` — **9 passed**. End to end through all eight
+  nodes; per-node effort tiers asserted rather than assumed; an ambiguous question parking at
+  `clarifying` with **zero queries considered**; an unapproved metric recorded as unapproved; an
+  escalated query parking at `awaiting_approval` with `synthesize` never reached; a rejected
+  query still producing an answer that cites nothing; a spent budget producing a `truncated` run
+  with a stated reason.
+- **The recovery test discards the graph object and rebuilds it between the two halves** — which
+  is what a process restart amounts to. Nothing carries the run forward but the checkpoint, and
+  the resumed half continues rather than starting over (`intake` appears exactly once).
+- Full suite: **369 passed**. `ruff` clean, `mypy` clean (42 files). Guard suite still 127/127.
+
+**Blocked, and deliberately not faked**
+`ANTHROPIC_API_KEY` is not set, so no test has yet driven a **real** model call. Everything above
+is asserted against a scripted model. The wrapper is written to the current API and type-checks,
+but "it works against the live API" is not yet established, and is not claimed. Add the key to
+`.env` and the `llm`-marked tests become runnable.
+
+**Three real problems found while building**
+1. **A CTE-style state bug: metric placeholders duplicated.** `clarify_gate` emitted placeholder
+   rows into `resolved_metrics`, which uses an append-only reducer — so the real resolution
+   *appended* rather than replacing, leaving both in state and both in the model's context. The
+   terms now travel as scratch and only the authoritative resolution is recorded.
+2. **numpy's type stubs need Python 3.12+ syntax**, which broke `mypy` under the declared floor
+   of 3.11. Rather than paper over it, `requires-python` moved to `>=3.12`: we develop and test on
+   3.13 and have never run 3.11, so the old floor was a claim we could not support.
+3. **mypy cannot bind LangGraph's `add_node` overloads when the node arrives as a `Callable`
+   alias** — verified empirically with a minimal repro: the same call type-checks with an inline
+   `def` and fails with an aliased one. Since the nodes come from factories by design, this is
+   handled with a single documented ignore in one helper rather than eight scattered ones.
