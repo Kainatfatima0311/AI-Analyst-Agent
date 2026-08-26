@@ -698,3 +698,54 @@ cleared by a person. Recording it as `allowed` would have erased the escalation 
 Migration 003 adds `approved` as its own verdict, so the audit now distinguishes "the guard
 permitted this" from "a person permitted this", and the executed constraint accepts both while
 still refusing a rejected or undecided one.
+
+### Step 11 — Streamlit analyst interface
+
+**Status:** OK Done - 2026-08-26
+
+**Built**
+- `ui/theme.py` - design tokens and one stylesheet.
+- `ui/api_client.py` - the UI's only route into the system.
+- `ui/components.py` - one function per rendered thing.
+- `ui/streamlit_app.py` - the page.
+
+**The colours are not chosen here**
+They come from `tools/palette.py`, the palette already run through the data-viz validator in
+Step 6. A chart and the card around it have to read as one system, and the alternative is a UI
+whose accents quietly disagree with its own charts. A test asserts the accent is drawn from that
+palette, and another asserts no status colour is reused as a series colour - status is reserved,
+and "failed" wearing the same hue as "series 4" would be a lie.
+
+**Status is never carried by colour alone**
+Every state ships as a chip with an icon *and* a label. A refuted hypothesis reads as "✕ Refuted"
+in a screenshot, in print, and to someone who cannot separate the green from the red. There is a
+test over every status key that both are present.
+
+**The layout follows one idea**
+A conclusion is worth what the evidence you can reach from it is worth. So the answer, its
+confidence, what was **ruled out**, and the SQL behind every cited number are on one screen -
+and the queries the guard *refused* are on the next tab rather than hidden, because what the
+agent tried is usually what a reviewer wants to know. Both approval buttons are equally
+prominent: rejection is a real answer, not the discouraged path.
+
+Light and dark are both defined, tokens swapping in one place rather than a filter flipped over
+the light theme.
+
+**Verification**
+- The API and the UI were both started for real: `/healthz`, `/readyz`, `/v1/metrics` (12),
+  `/v1/schema` (12 objects) and `/docs` all answer; Streamlit serves on 8501.
+- `pytest tests/integration/test_ui.py` - **14 passed**. A 200 from a Streamlit page proves
+  almost nothing, since it renders client-side, so these use `AppTest`, which executes the script
+  the way Streamlit does and surfaces any exception. Covered: the landing page and a finished run
+  both render clean, the conclusion and its confidence appear, what was ruled out appears beside
+  the answer, both hypotheses show with their verdicts, the SQL behind the answer is reachable,
+  a **blocked** query is visible with its reason, a parked run shows the exact statement plus
+  both buttons, and the design-token rules above.
+- Full suite: **441 passed**. ruff clean, mypy clean (51 files).
+
+**Two things that bit**
+- `ui/components/` existed as an empty package from the Step 0 skeleton and shadowed the new
+  `components.py`, so every `ui.*` call resolved to nothing. Removed the package.
+- The first UI test patched the page module, which does nothing: `AppTest` re-executes the script
+  in a fresh namespace each run. Patching the *dependency* it imports works, and the caches have
+  to be cleared too, or a real client cached by `st.cache_resource` outlives the patch.
