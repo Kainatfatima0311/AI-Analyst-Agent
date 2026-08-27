@@ -8,7 +8,7 @@
 | **Repository** | `https://github.com/Kainatfatima0311/AI-Analyst-Agent` |
 | **Language / runtime** | Python 3.12+ (developed on 3.13.5) |
 | **Core stack** | FastAPI · LangGraph · Anthropic Claude (`claude-opus-5`) or Groq · PostgreSQL 17 · sqlglot · pandas · Plotly · reportlab / openpyxl · Fernet · a hand-written HTML/CSS/JS interface served by the API |
-| **Size** | 59 source modules · 27 test modules · **670 tests passing** |
+| **Size** | 59 source modules · 27 test modules · **671 tests passing** |
 | **Static analysis** | `ruff` clean · `mypy --strict` clean |
 | **Document date** | 26 August 2026 |
 
@@ -78,7 +78,7 @@ structurally rather than by instruction:
 The system was built in fifteen documented steps, each with its own tests and its own commit. It
 ships with a Dockerised stack that starts with one command, a 79-case hostile-query corpus as a
 security regression net, a 32-question evaluation suite in which seven questions must *not* be
-answered at all, and a CI pipeline. **670 automated tests pass.**
+answered at all, and a CI pipeline. **671 automated tests pass.**
 
 It has since grown three further phases, each documented in its own section: a product layer (dashboards, saved reports, exports, a decomposable confidence score — §27), an enterprise layer (organisations, teams, encrypted data sources, share links, monitoring alerts, an append-only audit trail — §28), and a presentation layer that turns the answer into an eight-section business intelligence report rather than a chat reply (§29).
 
@@ -791,7 +791,7 @@ Two reducer decisions matter more than they look:
 Every node is a **closure over an LLM and a tool registry** (`make_gather_context(ctx)` and so
 on). This is not a testing nicety: the routing is where the policy lives, and routing must be
 asserted deterministically rather than through whatever a model happens to say on the day. It is
-the reason 670 tests pass with no API key.
+the reason 671 tests pass with no API key.
 
 ### 11.4 The bounded tool loop
 
@@ -1080,7 +1080,7 @@ PNG and the screen. A test asserts the page requests nothing from a third party.
 
 ### 18.1 Composition
 
-**670 tests** across 27 modules.
+**671 tests** across 27 modules.
 
 | Suite | Focus |
 |---|---|
@@ -1244,7 +1244,7 @@ milestones.
 
 | | |
 |---|---|
-| Tests | **670 passing** — 59 source modules, `ruff` and `mypy` clean |
+| Tests | **671 passing** — 59 source modules, `ruff` and `mypy` clean |
 | Hostile queries rejected | **79 / 79**, with no database required to prove it |
 | Read-only role assertions | **29 / 29**, and they pass inside the container |
 | Approved metrics | **12**, each executing and each passing the guard |
@@ -1266,7 +1266,7 @@ The two halves of the project fail differently, and conflating them would misrep
 
 | | Verified | Not verified |
 |---|---|---|
-| **This repository's behaviour** — routing, policy edges, approval flow, budget caps, recovery, guard decisions, metric rendering, tenant isolation, encryption, exports, graders | ✅ 670 tests | — |
+| **This repository's behaviour** — routing, policy edges, approval flow, budget caps, recovery, guard decisions, metric rendering, tenant isolation, encryption, exports, graders | ✅ 671 tests | — |
 | **The model's analytical quality** — does it write correct SQL, generate genuinely distinct hypotheses, calibrate confidence, decline appropriately | — | ❌ requires a live key |
 
 A routing bug is a bug in this repository. A weak hypothesis is a property of the model and the
@@ -1607,7 +1607,7 @@ The brief's nine common standards, each mapped to where it is met:
 | # | Standard | Where |
 |---|---|---|
 | 1 | A design document written **before** coding | `docs/design-document.md`, committed in Step 1 before any agent code |
-| 2 | Git repository with README, tests and CI | one commit per step; `README.md`; 670 tests; `.github/workflows/ci.yml` |
+| 2 | Git repository with README, tests and CI | one commit per step; `README.md`; 671 tests; `.github/workflows/ci.yml` |
 | 3 | Dockerised setup | `Dockerfile` (multi-stage, non-root) + `docker-compose.yml`, verified on a clean clone |
 | 4 | Structured logging, agent traces, tool-call history | `observability/logging.py`; `run_steps`, `tool_calls`, `sql_audit`; `GET /trace` |
 | 5 | Persistent task state with recovery | `PostgresSaver` checkpointing; resume by `thread_id`, tested across a graph rebuild |
@@ -2046,7 +2046,7 @@ tested: the safety layer holds against 79 attacks, the metrics layer is a guaran
 convention, the investigation loop cannot be short-circuited, the tenant boundary is enforced in
 SQL and checked from both directions, credentials are encrypted with a key held elsewhere, the
 trace reconstructs any run — including the values bound to a parameterised query — and one command
-brings the whole stack up on a clean machine. 670 tests pass; `ruff` and `mypy` are clean.
+brings the whole stack up on a clean machine. 671 tests pass; `ruff` and `mypy` are clean.
 
 What it has still not done is answer a real question with a real model *at scale*. A single live run
 completed end to end (§22), and the evaluation suite validates in full — 32 questions, every

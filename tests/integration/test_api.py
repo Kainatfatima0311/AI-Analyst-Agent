@@ -9,6 +9,7 @@ what it did.
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -391,3 +392,25 @@ def test_the_interface_has_empty_and_loading_states(client: TestClient) -> None:
     assert "function skeleton(" in javascript
     assert ".empty-title" in css
     assert "@keyframes shimmer" in css
+
+def test_the_interface_ships_with_the_installed_package() -> None:
+    """Declared in `package-data`, not merely present in the source tree.
+
+    Without that declaration the installed wheel holds only Python modules, so `api/static/` is
+    absent from the container image and `/app/` answers 404 there while working perfectly from a
+    checkout. That is the worst shape a bug can have — every local check passes — and it is what
+    actually happened: the container served the API and no interface.
+
+    Asserted against `pyproject.toml` rather than against the filesystem, because the filesystem is
+    what already looked fine.
+    """
+    import tomllib
+
+    config = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    package_data = config["tool"]["setuptools"]["package-data"]["analyst_agent"]
+    assert any(entry.startswith("api/static") for entry in package_data), (
+        "api/static must be declared as package data, or the image ships no interface"
+    )
+    # And the files it promises are really there to ship.
+    static = Path("src/analyst_agent/api/static")
+    assert {p.name for p in static.iterdir()} >= {"index.html", "app.css", "app.js"}

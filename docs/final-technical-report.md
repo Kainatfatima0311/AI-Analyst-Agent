@@ -19,7 +19,7 @@ Fourteen planned steps; thirteen complete, one built but unmeasured.
 
 | | |
 |---|---|
-| Tests | **670 passing** — 59 source files, `ruff` and `mypy` clean |
+| Tests | **671 passing** — 59 source files, `ruff` and `mypy` clean |
 | Hostile queries rejected | **79 / 79**, with no database required to prove it |
 | Read-only role assertions | **29 / 29** |
 | Approved metrics | 12, each executing and each passing the guard |
@@ -215,7 +215,7 @@ repro rather than assumed.
 
 Every node is a closure over an LLM and a tool registry. This is not a testing nicety — the
 routing is where the policy lives, and routing has to be asserted deterministically rather than
-through whatever a model says on the day. It is the reason 670 tests pass with no API key, and
+through whatever a model says on the day. It is the reason 671 tests pass with no API key, and
 the reason the recovery path could be tested at all: the graph object is discarded and rebuilt
 between parking and resuming, which is what a process restart amounts to.
 
@@ -313,6 +313,19 @@ fix was three tool-calling nodes (`gather_context`, `analyse`, `visualize`) plus
 with a per-node allowlist. What makes this worth recording is *how* it hid: every tool had
 passing unit tests, so the test suite was green while the agent could not reach them. A tool
 inventory is not a capability until a node offers it.
+
+**The interface was missing from the image, and only a real container run showed it.** The stack
+served the API and answered 404 at `/app/`. `pyproject.toml` declared package data for the metric
+YAML and the prompts but not for `api/static/`, so the wheel the image installs contained no
+interface — while a source checkout, which is what every local check used, had the files sitting
+right there. The lesson is narrow and general at once: "it works from a checkout" is not "it works
+from the artefact you ship".
+
+**A pool timeout could abort a run mid-answer.** Recovering a query's values reaches the database to
+rebuild the frame, and the catch around it named only `KeyError` and `ValueError`. A `PoolTimeout`
+escaped and took the node down with it — losing findings the run had already established, because
+one result could not be re-read. Found by an audit rather than a test, because the tests always had
+a healthy database. Missing values now degrade to a note that says which ones are missing.
 
 **One environment failure worth recording.** Mid-project the `D:` drive was deleted. It held Git
 and the Python the virtualenv was built from, so every command failed at once and the shell died
@@ -557,7 +570,7 @@ Migration 006 records them.
 
 ### 10.6 Where that leaves the assessment in §9
 
-Unchanged in the one respect that matters. Everything above is verified by 670 tests against a
+Unchanged in the one respect that matters. Everything above is verified by 671 tests against a
 scripted model, a real database and real files. The **scored evaluation run against a live model
 still does not exist** — one question ran end to end, and the suite validates in full, but the
 numbers §6 asks for remain the single thing this project has not measured.

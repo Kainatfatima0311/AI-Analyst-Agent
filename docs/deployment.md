@@ -26,6 +26,10 @@ Ports are parameterised, so a collision does not mean editing the compose file:
 $env:API_PORT = "8010"; docker compose up
 ```
 
+This is not hypothetical: on a machine already running something else on 8000, compose fails with
+`Bind for 0.0.0.0:8000 failed: port is already allocated` and names the container holding it.
+`API_PORT` moves both the API and the interface together, because they are one process.
+
 **What is off in this mode.** `REQUIRE_AUTHENTICATION` defaults to `false`, so any request with no
 key is the default organisation's owner. That is deliberate — a demo has to work without an
 account — and it is why this mode is for a demo.
@@ -165,6 +169,7 @@ one that has already run is *detected* rather than silently diverging.
 | `003_approved_verdict` | `approved` as a distinct verdict from `allowed` |
 | `004_saved_reports` | reports as immutable snapshots |
 | `005_organizations` | tenancy, keys, data sources, shares, alerts, audit; backfills existing rows into a default organisation |
+| `006_audit_parameters` | records the values bound to a statement, so a parameterised query can be reproduced |
 
 Migration 005 is the one to read before deploying an upgrade: it adds `NOT NULL` columns to `runs`
 and `reports` and backfills them, so it is not instant on a large table.
@@ -187,6 +192,8 @@ Two things to remember wherever it goes:
 
 1. The seed step is a **one-shot** container. On a platform without one, run
    `python scripts/seed_db.py` once against the managed database.
+1. The interface is **package data**, declared in `pyproject.toml`. It has to be, because the image
+   installs the wheel rather than running from the checkout — see §8.
 2. `/readyz` asserts that the read-only role really is read-only, so a misconfigured deployment
    fails readiness instead of serving unsafely. Point the platform's health check at it.
 
@@ -204,3 +211,27 @@ python scripts/migrate.py --check         # exits 1 if a migration is pending
 
 If `/readyz` reports `read_only_verified: false`, stop. It means generated SQL would run with write
 permission, which is the one failure mode this project exists to prevent.
+
+---
+
+## 8. A bug that only a real container run could find
+
+The first genuine `docker compose up` of the finished stack served the API correctly and answered
+**404 at `/app/`**. Locally the interface had always worked.
+
+The cause: `pyproject.toml` declared `package-data` for the metric YAML and the prompt files but not
+for `api/static/`. A wheel therefore contained only Python modules, and the container — which
+installs the wheel into `/opt/venv` rather than running from the source tree — had no `static`
+directory to serve. Every local check passed because a checkout has the files sitting right there.
+
+That is the worst shape a bug can have, and it is worth stating for two reasons:
+
+- **The claim it broke was the headline one.** "A clean clone plus `docker compose up` is the whole
+  setup" was false for the part a user sees first.
+- **No amount of unit testing would have caught it.** The fix is one line of packaging
+  configuration; the *lesson* is that "it works on my machine" and "it works from a checkout" are
+  the same sentence, and neither is "it works from the artefact you ship".
+
+There is now a test asserting the declaration exists in `pyproject.toml` — asserted against the
+configuration rather than the filesystem, because the filesystem is exactly what already looked
+fine.

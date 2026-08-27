@@ -62,7 +62,15 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-analyst_agent = ["metrics/definitions/*.yaml", "agent/prompts/*.md"]
+# The interface ships *with* the package. Without this line the installed wheel contains only
+# Python modules, so `api/static/` is absent from the image and `/app/` answers 404 in the
+# container while working perfectly from a source checkout - which is the worst shape a bug can
+# have, because every local check passes.
+analyst_agent = [
+    "metrics/definitions/*.yaml",
+    "agent/prompts/*.md",
+    "api/static/*",
+]
 
 # ---------------------------------------------------------------------------
 
