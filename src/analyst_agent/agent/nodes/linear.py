@@ -167,9 +167,17 @@ def _result_tables(state: AnalystState) -> str:
             break
         try:
             frame = store.get(uuid.UUID(query_id))
-        except (KeyError, ValueError):
-            # The frame is gone and could not be rebuilt from the audit trail. Saying so beats
-            # omitting the query, which would read as "this one returned nothing".
+        except Exception as exc:
+            # Deliberately broad. Recovering a frame can reach the database to rebuild it, so this
+            # can fail in ways that have nothing to do with the frame: a pool timeout, a dropped
+            # connection, a driver error. Narrowing this to KeyError and ValueError let a
+            # PoolTimeout escape and abort the node mid-run — found by an audit, not by a test,
+            # because the tests always had a healthy database.
+            #
+            # Missing values must degrade to a note rather than fail the answer: the run has
+            # already established findings, and losing them because one result could not be
+            # re-read is a worse outcome than an answer that says which values it could not show.
+            log.warning("result values unavailable", query_id=query_id, error=str(exc))
             blocks.append(f"{query_id}: values no longer available")
             continue
 

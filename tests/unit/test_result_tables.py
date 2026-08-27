@@ -155,9 +155,29 @@ def test_the_character_budget_stops_early_and_says_so() -> None:
 
 
 def test_an_unavailable_frame_is_reported_as_unavailable() -> None:
-    """Omitting it would read as "this query returned nothing", which is a different claim."""
+    """Omitting it would read as "this query returned nothing", which is a different claim.
+
+    The store is stubbed rather than left to reach the database. Recovering a frame rebuilds it
+    from the audit trail, so with no database this test used to fail on a pool timeout — which was
+    a *real* finding about the code, not about the test: the catch was narrowed to KeyError and
+    ValueError and a PoolTimeout escaped, aborting the node mid-run. Both are fixed; this keeps
+    the unit test a unit test.
+    """
     missing = str(uuid.uuid4())
-    rendered = _result_tables(_state(missing))
+
+    class Unavailable:
+        def get(self, _query_id: object) -> object:
+            raise RuntimeError("the pool is not available")
+
+    import analyst_agent.tools.frames as frames
+
+    original = frames.get_store
+    frames.get_store = lambda: Unavailable()  # type: ignore[assignment]
+    try:
+        rendered = _result_tables(_state(missing))
+    finally:
+        frames.get_store = original  # type: ignore[assignment]
+
     assert f"{missing}: values no longer available" in rendered
 
 
